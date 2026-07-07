@@ -25,3 +25,4 @@ dist-ssr
 *.sln
 *.sw?
 .house-wallet.local.json
+.house-wallet-tron.local.json

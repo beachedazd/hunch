@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { BottomNav } from './components/BottomNav';
 import { Header } from './components/Header';
+import { TickerTape } from './components/TickerTape';
 import { AuthProvider } from './hooks/useAuth';
 import { AuthModalProvider } from './hooks/useAuthModal';
 import { DepositModalProvider } from './hooks/useDepositModal';
@@ -46,6 +47,7 @@ function App() {
                 <DepositModalProvider>
                   <div className="flex min-h-screen flex-col bg-bg text-text-primary">
                     <Header />
+                    <TickerTape />
                     <main className="flex-1 pb-16 sm:pb-0">
                       <Routes>
                         <Route path="/" element={<Home />} />

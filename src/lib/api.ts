@@ -76,6 +76,38 @@ export async function getTrades(marketId: string): Promise<Trade[]> {
 }
 
 // ---------------------------------------------------------------------------
+// Ticker (24h price baselines)
+// ---------------------------------------------------------------------------
+
+// Baseline price_yes per market ~24h ago, from one query over the last 48h of
+// trades: the last trade before the 24h cutoff wins; a market whose first
+// trade falls inside the window uses that trade's price instead (its delta
+// then understates the move — fine for a ticker).
+export async function getTicker24hBaselines(): Promise<Record<string, number>> {
+  const now = Date.now();
+  const since = new Date(now - 48 * 3600 * 1000).toISOString();
+  const cutoff = now - 24 * 3600 * 1000;
+
+  const { data, error } = await supabase
+    .from('trades')
+    .select('market_id, price_yes_after, created_at')
+    .gte('created_at', since)
+    .order('created_at', { ascending: true });
+  if (error) fail(error, 'Failed to load recent trades');
+
+  const baselines: Record<string, number> = {};
+  for (const t of (data ?? []) as Pick<Trade, 'market_id' | 'price_yes_after' | 'created_at'>[]) {
+    const ts = new Date(t.created_at).getTime();
+    if (ts <= cutoff) {
+      baselines[t.market_id] = t.price_yes_after;
+    } else if (!(t.market_id in baselines)) {
+      baselines[t.market_id] = t.price_yes_after;
+    }
+  }
+  return baselines;
+}
+
+// ---------------------------------------------------------------------------
 // Positions
 // ---------------------------------------------------------------------------
 

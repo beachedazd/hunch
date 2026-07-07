@@ -49,3 +49,31 @@ body {
     @apply animate-pulse bg-border-c/60 rounded-md;
   }
 }
+
+/* Ticker tape marquee: the track holds two identical copies of the item row,
+   so sliding to -50% loops seamlessly. Duration is set inline per item count. */
+@keyframes ticker-scroll {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.ticker-track {
+  animation: ticker-scroll 120s linear infinite;
+}
+
+.ticker-wrap:hover .ticker-track {
+  animation-play-state: paused;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ticker-track {
+    animation: none;
+  }
+  .ticker-viewport {
+    overflow-x: auto;
+  }
+}
