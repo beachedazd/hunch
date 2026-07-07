@@ -11,6 +11,19 @@ import { useAuthModal } from '../hooks/useAuthModal';
 import { addComment, getComments, getMarketBySlug, getMyPosition, getTrades } from '../lib/api';
 import { priceYes } from '../lib/cpmm';
 import { formatDate, formatDateTime, formatUsd } from '../lib/format';
+import { parseAutoSeries, useCountdown, useSpotPrice } from '../lib/live';
+
+// Small print near the trade widget for auto markets, e.g. "Auto-resolves at
+// 15:05 UTC. Winnings credited automatically." Formats close_time in UTC to
+// match the "HH:MM UTC" convention used in the market question itself.
+function formatUtcTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  const hh = String(d.getUTCHours()).padStart(2, '0');
+  const mm = String(d.getUTCMinutes()).padStart(2, '0');
+  return `${hh}:${mm} UTC`;
+}
 
 export default function MarketDetail() {
   const { slug = '' } = useParams();
@@ -30,7 +43,20 @@ export default function MarketDetail() {
     queryKey: ['market', slug],
     queryFn: () => getMarketBySlug(slug),
     enabled: !!slug,
+    // Auto-resolving markets flip from open -> resolved on the server's own
+    // clock; poll while open so this page catches that shortly after close.
+    refetchInterval: (query) => {
+      const m = query.state.data;
+      return m?.auto_series && m.status === 'open' ? 5000 : false;
+    },
   });
+
+  const series = parseAutoSeries(market?.auto_series);
+  const isAutoOpen = !!series && market?.status === 'open';
+  // Hooks must run unconditionally (rules of hooks) — they're no-ops via
+  // `enabled`/empty input until we actually have an open auto market.
+  const { msLeft, text: countdownText } = useCountdown(market?.close_time ?? '');
+  const { data: spotPrice } = useSpotPrice(series?.asset ?? null, isAutoOpen);
 
   const { data: trades } = useQuery({
     queryKey: ['trades', market?.id ?? null],
@@ -98,28 +124,123 @@ export default function MarketDetail() {
   }
 
   const pYes = priceYes(market.yes_pool, market.no_pool);
+  const spotVsStrike =
+    spotPrice != null && market.strike_price != null ? spotPrice - market.strike_price : null;
 
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-7">
       <div className="mb-5">
-        <div className="text-[12.5px] font-semibold text-text-muted">
-          {market.category || 'Other'} · Resolves {formatDate(market.close_time)}
+        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-text-muted">
+          <span>
+            {market.category || 'Other'} · Resolves {formatDate(market.close_time)}
+          </span>
+          {market.source === 'polymarket' && (
+            <span
+              title="Mirrored from Polymarket — resolves automatically with the real market"
+              className="inline-block rounded-full bg-teal-tint px-2.5 py-1 text-[11.5px] font-bold uppercase tracking-wide text-teal-deep"
+            >
+              via Polymarket
+            </span>
+          )}
+          {series && market.status === 'open' && (
+            <>
+              <span className="inline-flex items-center gap-1 rounded-full bg-[#152229] px-2.5 py-1 text-[11px] font-extrabold uppercase tracking-wide text-white">
+                <span className="relative flex h-1.5 w-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-75" />
+                  <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-teal" />
+                </span>
+                Live
+              </span>
+              <span className="inline-block rounded-full bg-subtle px-2.5 py-1 text-[11.5px] font-bold tabular-nums text-text-secondary">
+                {msLeft > 0 ? countdownText : 'Resolving…'}
+              </span>
+            </>
+          )}
         </div>
         <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-text-primary sm:text-[28px]">
           {market.question}
         </h1>
         <div className="mt-2.5 flex flex-wrap items-center gap-3.5 text-[13px] font-semibold text-text-secondary">
           <span className="rounded-full bg-teal-tint px-3 py-1.5 font-extrabold text-teal-deep">
-            Yes {Math.round(pYes * 100)}¢
+            {series ? 'Up' : 'Yes'} {Math.round(pYes * 100)}¢
           </span>
           <span>{formatUsd(market.volume)} volume</span>
           <span>💬 {comments?.length ?? 0}</span>
           {market.status !== 'open' && (
             <span className="font-extrabold text-text-primary">
-              {market.status === 'resolved' ? `Resolved ${market.resolution?.toUpperCase()}` : 'Void'}
+              {market.status === 'resolved'
+                ? `Resolved ${series ? (market.resolution === 'yes' ? 'UP' : 'DOWN') : market.resolution?.toUpperCase()}`
+                : 'Void'}
             </span>
           )}
         </div>
+
+        {series && (
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+            <div className="rounded-2xl border border-border-c bg-white px-4 py-3">
+              <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">
+                Strike price
+              </div>
+              <div className="mt-0.5 text-[15px] font-extrabold text-text-primary">
+                {formatUsd(market.strike_price)}
+              </div>
+            </div>
+
+            {market.status === 'open' ? (
+              <div className="rounded-2xl border border-border-c bg-white px-4 py-3">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">
+                  Current price
+                </div>
+                <div
+                  className={`mt-0.5 text-[15px] font-extrabold ${
+                    spotVsStrike == null
+                      ? 'text-text-primary'
+                      : spotVsStrike > 0
+                        ? 'text-yes'
+                        : spotVsStrike < 0
+                          ? 'text-no'
+                          : 'text-text-primary'
+                  }`}
+                >
+                  {spotPrice != null ? formatUsd(spotPrice) : '…'}
+                  {spotVsStrike != null && spotVsStrike !== 0 && (
+                    <span className="ml-1">{spotVsStrike > 0 ? '▲' : '▼'}</span>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="rounded-2xl border border-border-c bg-white px-4 py-3">
+                <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">
+                  Close price
+                </div>
+                <div className="mt-0.5 text-[15px] font-extrabold text-text-primary">
+                  {market.resolution_price != null ? formatUsd(market.resolution_price) : '—'}
+                </div>
+              </div>
+            )}
+
+            {market.status === 'resolved' && (
+              <div
+                className={`rounded-2xl border px-4 py-3 ${
+                  market.resolution === 'yes'
+                    ? 'border-yes/20 bg-yes-bg'
+                    : 'border-no/20 bg-no-bg'
+                }`}
+              >
+                <div className="text-[11px] font-bold uppercase tracking-wide text-text-faint">
+                  Outcome
+                </div>
+                <div
+                  className={`mt-0.5 text-[15px] font-extrabold ${
+                    market.resolution === 'yes' ? 'text-yes' : 'text-no'
+                  }`}
+                >
+                  {market.resolution === 'yes' ? '▲ Up' : '▼ Down'}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
@@ -194,6 +315,12 @@ export default function MarketDetail() {
 
         <div className="flex flex-col gap-4 lg:sticky lg:top-20 lg:self-start">
           <TradeWidget market={market} />
+          {series && (
+            <div className="rounded-2xl bg-teal-tint px-[18px] py-3.5 text-[12.5px] font-semibold leading-relaxed text-teal-deep">
+              Auto-resolves at {formatUtcTime(market.close_time)}. Winnings credited
+              automatically.
+            </div>
+          )}
           {market.description && (
             <div className="rounded-2xl bg-rules px-[18px] py-4 text-[13px] leading-relaxed text-rules-text">
               <span className="font-extrabold">Rules:</span> {market.description}

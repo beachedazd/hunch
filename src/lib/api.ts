@@ -29,7 +29,8 @@ function fail(error: { message: string } | null, fallback: string): never {
 
 export async function listMarkets(
   category?: string | null,
-  search?: string | null
+  search?: string | null,
+  opts?: { excludeAuto?: boolean }
 ): Promise<Market[]> {
   let query = supabase.from('markets').select('*').order('volume', { ascending: false });
 
@@ -39,9 +40,25 @@ export async function listMarkets(
   if (search && search.trim()) {
     query = query.ilike('question', `%${search.trim()}%`);
   }
+  if (opts?.excludeAuto) {
+    query = query.is('auto_series', null);
+  }
 
   const { data, error } = await query;
   if (error) fail(error, 'Failed to load markets');
+  return (data ?? []) as Market[];
+}
+
+// Live, auto-resolving short-horizon crypto markets (BTC/ETH up-or-down),
+// shown in their own rail on Home rather than the normal grid.
+export async function fetchLiveMarkets(): Promise<Market[]> {
+  const { data, error } = await supabase
+    .from('markets')
+    .select('*')
+    .not('auto_series', 'is', null)
+    .eq('status', 'open')
+    .order('close_time', { ascending: true });
+  if (error) fail(error, 'Failed to load live markets');
   return (data ?? []) as Market[];
 }
 
@@ -396,6 +413,39 @@ export async function listMarketsByStatus(status: MarketStatus): Promise<Market[
     .order('close_time', { ascending: true });
   if (error) fail(error, 'Failed to load markets');
   return (data ?? []) as Market[];
+}
+
+export interface PolymarketSyncResult {
+  imported: Array<{ polymarket_id: string; question: string; category: string; price_yes: number }>;
+  resolved: Array<{ polymarket_id: string; question: string; resolution: string }>;
+  skipped: number;
+  errors: string[];
+}
+
+// Calls the Netlify function that triggers an on-demand Polymarket sync run.
+// Sends the current Supabase access token; the function checks the caller's
+// `profiles.is_admin` before importing/resolving mirrored markets.
+export async function syncPolymarket(): Promise<PolymarketSyncResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error('You must be signed in to sync Polymarket');
+
+  const res = await fetch('/api/polymarket-sync', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const body = (await res.json().catch(() => ({}))) as PolymarketSyncResult & { error?: string };
+
+  if (res.status === 401) {
+    throw new Error(body.error || 'You must be an admin to sync Polymarket');
+  }
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to sync Polymarket');
+  }
+  return body;
 }
 
 // ---------------------------------------------------------------------------
