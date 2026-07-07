@@ -5,7 +5,8 @@ import { EmptyState } from '../components/EmptyState';
 import { Skeleton } from '../components/Skeleton';
 import { useAuth } from '../hooks/useAuth';
 import { useToast } from '../hooks/useToast';
-import { listMarketsByStatus, resolveMarket } from '../lib/api';
+import { listMarketsByStatus, resolveMarket, syncPolymarket } from '../lib/api';
+import type { PolymarketSyncResult } from '../lib/api';
 import { formatDateTime, formatUsd } from '../lib/format';
 import type { Market } from '../types';
 
@@ -32,6 +33,9 @@ function AdminMarketsList() {
   const { showToast } = useToast();
   const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<Record<string, string>>({});
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState<PolymarketSyncResult | null>(null);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const { data: markets, isLoading } = useQuery({
     queryKey: ['admin-markets', 'open'],
@@ -63,11 +67,70 @@ function AdminMarketsList() {
     }
   }
 
+  async function handleSync() {
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const result = await syncPolymarket();
+      setSyncResult(result);
+      showToast(
+        `Imported ${result.imported.length} · Resolved ${result.resolved.length}`,
+        'success'
+      );
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['admin-markets'] }),
+        queryClient.invalidateQueries({ queryKey: ['markets'] }),
+      ]);
+    } catch (err) {
+      setSyncResult(null);
+      setSyncError(err instanceof Error ? err.message : 'Failed to sync Polymarket');
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   return (
     <div className="mx-auto max-w-5xl px-4 py-8 sm:px-7">
       <h1 className="mb-6 text-2xl font-extrabold tracking-tight text-text-primary">
         Admin · Resolve markets
       </h1>
+
+      <div className="mb-6 rounded-2xl border border-border-c bg-white p-4">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <p className="font-bold text-text-primary">Sync Polymarket</p>
+            <p className="text-xs text-text-muted">
+              Import new mirrored markets and resolve any that have settled.
+            </p>
+          </div>
+          <button
+            onClick={handleSync}
+            disabled={syncing}
+            className="shrink-0 rounded-lg bg-teal px-4 py-1.5 text-xs font-bold text-white transition hover:bg-teal-deep disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {syncing ? 'Syncing…' : 'Sync Polymarket'}
+          </button>
+        </div>
+
+        {syncResult && (
+          <div className="mt-3">
+            <p className="text-xs font-semibold text-text-secondary">
+              Imported {syncResult.imported.length} · Resolved {syncResult.resolved.length} ·
+              Skipped {syncResult.skipped}
+            </p>
+            {syncResult.errors.length > 0 && (
+              <ul className="mt-1 space-y-0.5">
+                {syncResult.errors.map((e, i) => (
+                  <li key={i} className="text-[11px] text-text-faint">
+                    {e}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+        {syncError && <p className="mt-2 text-xs font-medium text-no">{syncError}</p>}
+      </div>
 
       {isLoading ? (
         <div className="space-y-2">

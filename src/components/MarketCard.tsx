@@ -32,7 +32,17 @@ export function MarketCard({ market, commentCount }: MarketCardProps) {
       className="flex cursor-pointer flex-col gap-3 rounded-2xl border border-border-c bg-white p-[18px] transition hover:border-text-faint"
     >
       <div className="flex items-center justify-between">
-        <CategoryPill category={market.category} />
+        <div className="flex items-center gap-1.5">
+          <CategoryPill category={market.category} />
+          {market.source === 'polymarket' && (
+            <span
+              title="Mirrored from Polymarket — resolves automatically with the real market"
+              className="inline-block rounded-full bg-teal-tint px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-teal-deep"
+            >
+              PM
+            </span>
+          )}
+        </div>
         <span className="text-xs font-semibold text-text-faint">{formatUsd(market.volume)}</span>
       </div>
 

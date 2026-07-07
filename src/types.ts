@@ -3,6 +3,7 @@
 export type MarketStatus = 'open' | 'resolved' | 'void';
 export type Resolution = 'yes' | 'no' | null;
 export type Outcome = 'yes' | 'no';
+export type MarketSource = 'user' | 'polymarket';
 export type TradeAction = 'buy' | 'sell';
 export type TransactionType = 'faucet' | 'deposit' | 'buy' | 'sell' | 'redeem';
 export type DepositStatus = 'confirmed' | 'rejected';
@@ -35,6 +36,8 @@ export interface Market {
   close_time: string | null;
   resolved_at: string | null;
   created_at: string;
+  source: MarketSource;
+  polymarket_id: string | null;
 }
 
 export interface Position {

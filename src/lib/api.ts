@@ -398,6 +398,39 @@ export async function listMarketsByStatus(status: MarketStatus): Promise<Market[
   return (data ?? []) as Market[];
 }
 
+export interface PolymarketSyncResult {
+  imported: Array<{ polymarket_id: string; question: string; category: string; price_yes: number }>;
+  resolved: Array<{ polymarket_id: string; question: string; resolution: string }>;
+  skipped: number;
+  errors: string[];
+}
+
+// Calls the Netlify function that triggers an on-demand Polymarket sync run.
+// Sends the current Supabase access token; the function checks the caller's
+// `profiles.is_admin` before importing/resolving mirrored markets.
+export async function syncPolymarket(): Promise<PolymarketSyncResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error('You must be signed in to sync Polymarket');
+
+  const res = await fetch('/api/polymarket-sync', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  });
+
+  const body = (await res.json().catch(() => ({}))) as PolymarketSyncResult & { error?: string };
+
+  if (res.status === 401) {
+    throw new Error(body.error || 'You must be an admin to sync Polymarket');
+  }
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to sync Polymarket');
+  }
+  return body;
+}
+
 // ---------------------------------------------------------------------------
 // Leaderboard
 // ---------------------------------------------------------------------------

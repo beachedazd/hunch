@@ -16,7 +16,8 @@ deposits), track your portfolio. Frontend on Netlify, backend on Supabase.
   TanStack Query v5, Recharts, ethers v6, `@supabase/supabase-js` v2.
 - **Backend**: Supabase Postgres. All trading logic lives in `SECURITY DEFINER`
   SQL functions (RPCs). RLS on everything.
-- **Serverless**: Netlify Functions (TypeScript) for on-chain deposit verification.
+- **Serverless**: Netlify Functions (TypeScript) for on-chain deposit verification and
+  Polymarket sync (hourly cron + on-demand admin trigger).
 - **Layout**: single repo — `src/` (app), `netlify/functions/`, `supabase/migrations/`.
 
 ## Trading engine — CPMM (constant-product market maker)
@@ -46,7 +47,8 @@ Binary markets (YES/NO), USDC-denominated (play-money ledger, `numeric(18,6)`).
   `category text`, `image_url text`, `creator_id uuid`, `yes_pool numeric`, `no_pool numeric`,
   `fee_bps int default 200`, `fee_collected numeric default 0`, `volume numeric default 0`,
   `status text check in ('open','resolved','void')`, `resolution text null check in ('yes','no')`,
-  `close_time timestamptz`, `resolved_at timestamptz`, `created_at`.
+  `close_time timestamptz`, `resolved_at timestamptz`, `created_at`,
+  `source text default 'user' check in ('user','polymarket')`, `polymarket_id text null`.
 - `positions` — PK `(user_id, market_id)`, `yes_shares numeric default 0`, `no_shares numeric default 0`, `updated_at`.
 - `trades` — `id`, `market_id`, `user_id`, `action text ('buy','sell')`, `outcome text ('yes','no')`,
   `amount numeric` (USDC in/out), `shares numeric`, `price numeric` (avg execution price),
@@ -66,6 +68,8 @@ Binary markets (YES/NO), USDC-denominated (play-money ledger, `numeric(18,6)`).
 - `resolve_market(p_market_id, p_resolution)` — admin only ('yes'|'no'|'void')
 - `redeem_winnings(p_market_id)` → pays out winning shares, zeroes position
 - `credit_deposit(p_user_id, p_tx_hash, p_amount_eth, p_amount_usdc)` — **service_role only** (revoke from authenticated), idempotent on tx_hash
+- `sync_import_polymarket_market(...)` — **service_role only**, upserts a mirrored market (`source='polymarket'`) keyed on `polymarket_id`
+- `sync_resolve_market(p_polymarket_id, p_resolution)` — **service_role only**, resolves a mirrored market ('yes'|'no'|'void') by `polymarket_id`
 
 All RPCs: row-lock market and profile (`FOR UPDATE`), validate balance/shares/status/close_time, write trades + transactions + positions atomically.
 
@@ -87,7 +91,29 @@ All RPCs: row-lock market and profile (`FOR UPDATE`), validate balance/shares/st
 ## Env vars
 
 Frontend (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_HOUSE_ADDRESS`, `VITE_CHAIN_ID=11155111`
-Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SEPOLIA_RPC_URL`, `HOUSE_ADDRESS`
+Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SEPOLIA_RPC_URL`, `HOUSE_ADDRESS`, `POLYMARKET_SYNC_SECRET`
+
+## Polymarket sync
+
+Markets can be mirrored from the real Polymarket instead of user-created. `markets.source`
+('user' | 'polymarket', default 'user') flags these; `markets.polymarket_id` stores the
+upstream market id and is the upsert key.
+
+- **Import**: `sync_import_polymarket_market` (service-role RPC) upserts a mirrored market
+  from Polymarket's Gamma API data (question, category, image, `price_yes` seeding the pools).
+- **Resolve**: `sync_resolve_market` (service-role RPC) resolves a mirrored market once the
+  real one settles. Mapping from Gamma's market fields: `umaResolutionStatus === 'resolved'`
+  and `closed === true` → outcome from `outcomePrices`: `[1, 0]` → yes, `[0, 1]` → no, anything
+  else → void.
+- **Netlify functions**:
+  - Hourly cron function runs the full sync (import new + resolve settled) using the service
+    role directly — no auth needed, triggered by Netlify's scheduled functions.
+  - `POST /api/polymarket-sync` runs the same sync on demand. Auth: either header
+    `x-sync-key: <POLYMARKET_SYNC_SECRET>` (for external/cron callers) or
+    `Authorization: Bearer <supabase access token>` for a signed-in user whose
+    `profiles.is_admin` is true (used by the Admin page's "Sync Polymarket" button).
+    Responds 200 with `{ imported, resolved, skipped, errors }`, 401 if unauthorized, 500
+    `{ error }` on failure.
 
 ## Pages / UI (dark theme, Polymarket-inspired)
 

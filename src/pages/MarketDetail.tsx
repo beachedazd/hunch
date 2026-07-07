@@ -102,8 +102,18 @@ export default function MarketDetail() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-7">
       <div className="mb-5">
-        <div className="text-[12.5px] font-semibold text-text-muted">
-          {market.category || 'Other'} · Resolves {formatDate(market.close_time)}
+        <div className="flex items-center gap-2 text-[12.5px] font-semibold text-text-muted">
+          <span>
+            {market.category || 'Other'} · Resolves {formatDate(market.close_time)}
+          </span>
+          {market.source === 'polymarket' && (
+            <span
+              title="Mirrored from Polymarket — resolves automatically with the real market"
+              className="inline-block rounded-full bg-teal-tint px-2.5 py-1 text-[11.5px] font-bold uppercase tracking-wide text-teal-deep"
+            >
+              via Polymarket
+            </span>
+          )}
         </div>
         <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-text-primary sm:text-[28px]">
           {market.question}
