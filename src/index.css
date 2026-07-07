@@ -1,0 +1,51 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family:
+    'Outfit',
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    sans-serif;
+  background-color: #f7f9fa;
+  color: #152229;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #f7f9fa;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #dfe7ea;
+  border-radius: 8px;
+}
+
+@layer utilities {
+  .skeleton {
+    @apply animate-pulse bg-border-c/60 rounded-md;
+  }
+}
