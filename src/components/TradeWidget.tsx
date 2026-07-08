@@ -36,6 +36,11 @@ export function TradeWidget({ market }: TradeWidgetProps) {
 
   const isClosed = market.status !== 'open';
 
+  // Auto-resolving crypto markets (auto_series set) frame outcomes as
+  // Up/Down rather than Yes/No; the underlying 'yes'/'no' values sent to the
+  // API are unchanged.
+  const outcomeLabels = market.auto_series ? { yes: 'Up', no: 'Down' } : { yes: 'Yes', no: 'No' };
+
   const { data: position } = useQuery({
     queryKey: ['position', market.id, session?.user.id ?? null],
     queryFn: () => getMyPosition(market.id),
@@ -108,7 +113,10 @@ export function TradeWidget({ market }: TradeWidgetProps) {
     try {
       if (mode === 'buy') {
         const result = await buyShares(market.id, outcome, amountNum);
-        showToast(`Bought ${formatShares(result.shares)} ${outcome.toUpperCase()} shares`, 'success');
+        showToast(
+          `Bought ${formatShares(result.shares)} ${outcomeLabels[outcome].toUpperCase()} shares`,
+          'success'
+        );
       } else {
         const result = await sellShares(market.id, outcome, amountNum);
         showToast(`Sold for ${formatUsd(result.proceeds)}`, 'success');
@@ -125,7 +133,7 @@ export function TradeWidget({ market }: TradeWidgetProps) {
   const submitDisabled =
     isClosed || !hasValidInput || insufficientBalance || insufficientShares || submitting;
 
-  let buttonLabel = `${mode === 'buy' ? 'Buy' : 'Sell'} ${outcome === 'yes' ? 'Yes' : 'No'}`;
+  let buttonLabel = `${mode === 'buy' ? 'Buy' : 'Sell'} ${outcomeLabels[outcome]}`;
   if (!session) buttonLabel = 'Sign in to trade';
   else if (isClosed) buttonLabel = 'Market closed';
   else if (submitting) buttonLabel = 'Processing…';
@@ -170,7 +178,7 @@ export function TradeWidget({ market }: TradeWidgetProps) {
             outcome === 'yes' ? 'bg-white text-teal-deep shadow-sm' : 'text-text-muted'
           )}
         >
-          {mode === 'buy' ? 'Buy' : 'Sell'} Yes {Math.round(pYes * 100)}¢
+          {mode === 'buy' ? 'Buy' : 'Sell'} {outcomeLabels.yes} {Math.round(pYes * 100)}¢
         </button>
         <button
           onClick={() => switchOutcome('no')}
@@ -179,7 +187,7 @@ export function TradeWidget({ market }: TradeWidgetProps) {
             outcome === 'no' ? 'bg-white text-no shadow-sm' : 'text-text-muted'
           )}
         >
-          {mode === 'buy' ? 'Buy' : 'Sell'} No {Math.round(pNo * 100)}¢
+          {mode === 'buy' ? 'Buy' : 'Sell'} {outcomeLabels.no} {Math.round(pNo * 100)}¢
         </button>
       </div>
 
@@ -250,7 +258,7 @@ export function TradeWidget({ market }: TradeWidgetProps) {
             <span className="font-bold text-text-primary">{formatShares(potentialPayout)}</span>
           </div>
           <div className="flex justify-between">
-            <span>If {outcome === 'yes' ? 'Yes' : 'No'} wins</span>
+            <span>If {outcomeLabels[outcome]} wins</span>
             <span className="font-extrabold text-yes">
               {formatUsd(potentialPayout)} ({potentialGainPct >= 0 ? '+' : ''}
               {potentialGainPct.toFixed(0)}%)

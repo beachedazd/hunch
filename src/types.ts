@@ -36,6 +36,9 @@ export interface Market {
   close_time: string | null;
   resolved_at: string | null;
   created_at: string;
+  auto_series: string | null;
+  strike_price: number | null;
+  resolution_price: number | null;
   source: MarketSource;
   polymarket_id: string | null;
 }

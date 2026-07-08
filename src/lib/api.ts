@@ -29,7 +29,8 @@ function fail(error: { message: string } | null, fallback: string): never {
 
 export async function listMarkets(
   category?: string | null,
-  search?: string | null
+  search?: string | null,
+  opts?: { excludeAuto?: boolean }
 ): Promise<Market[]> {
   let query = supabase.from('markets').select('*').order('volume', { ascending: false });
 
@@ -39,9 +40,25 @@ export async function listMarkets(
   if (search && search.trim()) {
     query = query.ilike('question', `%${search.trim()}%`);
   }
+  if (opts?.excludeAuto) {
+    query = query.is('auto_series', null);
+  }
 
   const { data, error } = await query;
   if (error) fail(error, 'Failed to load markets');
+  return (data ?? []) as Market[];
+}
+
+// Live, auto-resolving short-horizon crypto markets (BTC/ETH up-or-down),
+// shown in their own rail on Home rather than the normal grid.
+export async function fetchLiveMarkets(): Promise<Market[]> {
+  const { data, error } = await supabase
+    .from('markets')
+    .select('*')
+    .not('auto_series', 'is', null)
+    .eq('status', 'open')
+    .order('close_time', { ascending: true });
+  if (error) fail(error, 'Failed to load live markets');
   return (data ?? []) as Market[];
 }
 

@@ -79,6 +79,25 @@ All RPCs: row-lock market and profile (`FOR UPDATE`), validate balance/shares/st
 - `profiles`: SELECT all (public leaderboard-ish), UPDATE own (username, wallet_address only — via column check trigger or separate RPC; simplest: allow update own row, balance guarded because updates go through RPCs — NO: balance must not be user-writable. Use a trigger rejecting balance/is_admin/last_faucet_at changes by non-service role).
 - `positions`, `transactions`, `deposits`: SELECT own only.
 
+## Live auto-resolving crypto markets
+
+Short-horizon "Bitcoin/Ethereum Up or Down" markets on rolling 5/10/30-minute
+windows — created and resolved entirely by the database, no admin action.
+Migration: `supabase/migrations/20260708000010_live_crypto_markets.sql`.
+
+- `markets` gains `auto_series` (`btc-5m`|`btc-10m`|`btc-30m`|`eth-5m`|`eth-10m`|`eth-30m`, null for normal markets), `strike_price`, `resolution_price`.
+- `fetch_crypto_price(asset)` — Coinbase spot primary, Binance fallback, via the
+  `http` extension (5s curl timeout). `tick_auto_markets()` — advisory-locked,
+  scheduled by **pg_cron every 15s**. Each tick: fetches each needed asset price
+  at most once (zero HTTP when nothing is due), resolves due windows
+  (close price **strictly above** strike ⇒ YES/Up; ties/below ⇒ NO/Down),
+  instantly settles winners (credits balance + zeroes shares, no user redeem),
+  and seeds the next epoch-aligned window per series (yes_pool=no_pool=500, paid
+  from the system profile `00000000-…-000000000001`, topped up +10M by the migration).
+- Frontend: `src/lib/live.ts` (`parseAutoSeries`, `useCountdown`, `useSpotPrice`),
+  Live rail on Home, Up/Down trade labels, strike-vs-live-spot strip on detail.
+  Home grid excludes auto markets (`listMarkets(..., { excludeAuto: true })`).
+
 ## Crypto backing
 
 - MetaMask connect (ethers v6 BrowserProvider); store address on profile.

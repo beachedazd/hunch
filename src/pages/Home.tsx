@@ -3,11 +3,12 @@ import { useMemo } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { EmptyState } from '../components/EmptyState';
+import { LiveMarketCard } from '../components/LiveMarketCard';
 import { MarketCard } from '../components/MarketCard';
 import { MarketCardSkeleton } from '../components/Skeleton';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../hooks/useAuthModal';
-import { listMarkets } from '../lib/api';
+import { fetchLiveMarkets, listMarkets } from '../lib/api';
 import { priceYes } from '../lib/cpmm';
 import { formatUsd } from '../lib/format';
 import { MARKET_CATEGORIES } from '../types';
@@ -47,8 +48,21 @@ export default function Home() {
     error,
   } = useQuery({
     queryKey: ['markets', category],
-    queryFn: () => listMarkets(category || null, null),
+    queryFn: () => listMarkets(category || null, null, { excludeAuto: true }),
   });
+
+  const { data: liveMarkets } = useQuery({
+    queryKey: ['liveMarkets'],
+    queryFn: fetchLiveMarkets,
+    refetchInterval: 10000,
+  });
+
+  const sortedLiveMarkets = useMemo(() => {
+    if (!liveMarkets) return [];
+    return liveMarkets
+      .slice()
+      .sort((a, b) => new Date(a.close_time ?? 0).getTime() - new Date(b.close_time ?? 0).getTime());
+  }, [liveMarkets]);
 
   const hero = useMemo(() => {
     if (!markets) return null;
@@ -160,6 +174,25 @@ export default function Home() {
       )}
 
       <div id="market-grid" className="mx-auto max-w-7xl scroll-mt-20 px-4 py-6 sm:px-7">
+        {sortedLiveMarkets.length > 0 && (
+          <div className="mb-6">
+            <div className="mb-3 flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-teal" />
+              </span>
+              <h2 className="text-[15px] font-extrabold text-text-primary">
+                Live — resolves on the clock
+              </h2>
+            </div>
+            <div className="flex snap-x gap-3 overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              {sortedLiveMarkets.map((m) => (
+                <LiveMarketCard key={m.id} market={m} />
+              ))}
+            </div>
+          </div>
+        )}
+
         {isError && (
           <EmptyState
             title="Couldn't load markets"
