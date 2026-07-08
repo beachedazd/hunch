@@ -1,8 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { CategoryPill } from './CategoryPill';
-import { priceYes } from '../lib/cpmm';
 import { formatDate, formatUsd } from '../lib/format';
-import { parseAutoSeries, useCountdown } from '../lib/live';
+import { blendedPriceYes, parseAutoSeries, useCountdown, useSpotPrice } from '../lib/live';
 import type { Market } from '../types';
 
 interface MarketCardProps {
@@ -12,10 +11,14 @@ interface MarketCardProps {
 
 export function MarketCard({ market, commentCount }: MarketCardProps) {
   const navigate = useNavigate();
-  const pYes = priceYes(market.yes_pool, market.no_pool);
-  const pNo = 1 - pYes;
   const isClosed = market.status !== 'open';
   const series = parseAutoSeries(market.auto_series);
+  // Auto markets show live model odds from the (shared, per-asset) spot poll;
+  // non-auto markets keep the exact pool price (blendedPriceYes falls back to
+  // it when series/live price is absent).
+  const { data: spot } = useSpotPrice(series?.asset ?? null, !!series);
+  const pYes = blendedPriceYes(market, spot ?? null);
+  const pNo = 1 - pYes;
   // Hook is always called (rules of hooks); its output is only rendered
   // below when this card happens to represent an auto market.
   const { msLeft, text: countdownText } = useCountdown(market.close_time ?? '');

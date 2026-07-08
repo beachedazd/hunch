@@ -1,6 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { parseAutoSeries, useCountdown, type LiveAsset } from '../lib/live';
-import { priceYes } from '../lib/cpmm';
+import { blendedPriceYes, parseAutoSeries, useCountdown, useSpotPrice, type LiveAsset } from '../lib/live';
 import { formatUsd } from '../lib/format';
 import type { Market } from '../types';
 
@@ -19,7 +18,8 @@ export function LiveMarketCard({ market }: LiveMarketCardProps) {
   const { msLeft, text } = useCountdown(market.close_time ?? '');
   const isResolving = msLeft <= 0;
 
-  const pYes = priceYes(market.yes_pool, market.no_pool);
+  const { data: spot } = useSpotPrice(series?.asset ?? null, !!series);
+  const pYes = blendedPriceYes(market, spot ?? null);
   const pNo = 1 - pYes;
 
   function goToTrade(e: React.MouseEvent, outcome: 'yes' | 'no') {

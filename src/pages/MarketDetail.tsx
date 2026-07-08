@@ -10,9 +10,16 @@ import { TradeWidget } from '../components/TradeWidget';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../hooks/useAuthModal';
 import { addComment, getComments, getMarketBySlug, getMyPosition, getTrades } from '../lib/api';
-import { priceYes } from '../lib/cpmm';
 import { formatDate, formatDateTime, formatUsd } from '../lib/format';
-import { localTime, localWindow, parseAutoSeries, useCountdown, useLiveTicker } from '../lib/live';
+import {
+  blendedPriceYes,
+  localTime,
+  localWindow,
+  parseAutoSeries,
+  useAnimatedNumber,
+  useCountdown,
+  useLiveTicker,
+} from '../lib/live';
 import type { LiveAsset } from '../lib/live';
 
 const ASSET_NAMES: Record<LiveAsset, string> = {
@@ -64,6 +71,10 @@ export default function MarketDetail() {
   // `enabled`/empty input until we actually have an open auto market.
   const { msLeft, text: countdownText } = useCountdown(market?.close_time ?? '');
   const { price: spotPrice } = useLiveTicker(series?.asset ?? null, isAutoOpen);
+  // Roll the "Current price" stat through intermediate values on every tick
+  // instead of snapping. The up/down color stays keyed to the real spotPrice
+  // vs strike (below) so it never flickers mid-tween.
+  const animatedSpotPrice = useAnimatedNumber(spotPrice);
 
   const { data: trades } = useQuery({
     queryKey: ['trades', market?.id ?? null],
@@ -130,7 +141,7 @@ export default function MarketDetail() {
     );
   }
 
-  const pYes = priceYes(market.yes_pool, market.no_pool);
+  const pYes = blendedPriceYes(market, spotPrice);
   const spotVsStrike =
     spotPrice != null && market.strike_price != null ? spotPrice - market.strike_price : null;
 
@@ -215,7 +226,7 @@ export default function MarketDetail() {
                           : 'text-text-primary'
                   }`}
                 >
-                  {spotPrice != null ? formatUsd(spotPrice) : '…'}
+                  {animatedSpotPrice != null ? formatUsd(animatedSpotPrice) : '…'}
                   {spotVsStrike != null && spotVsStrike !== 0 && (
                     <span className="ml-1">{spotVsStrike > 0 ? '▲' : '▼'}</span>
                   )}
