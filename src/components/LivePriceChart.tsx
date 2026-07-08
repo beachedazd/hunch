@@ -2,6 +2,10 @@
 // Unlike PriceChart (which plots the YES-probability from trade history),
 // this plots the underlying asset price streamed live via useLiveTicker, so
 // the line visibly advances toward close_time as the countdown runs.
+//
+// Visual design intentionally mirrors Polymarket's "Up or Down" live chart:
+// asset-branded line color, right-side Y axis, a "Target" reference line
+// with a pill label, and a leading dot marking the newest live tick.
 
 import { format } from 'date-fns';
 import { useEffect, useMemo, useState } from 'react';
@@ -9,6 +13,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  ReferenceDot,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -31,6 +36,15 @@ interface PricePoint {
 
 type CoinbaseCandle = [number, number, number, number, number, number];
 
+// Asset-branded line colors — Polymarket's "Up or Down" chart uses the
+// coin's own brand color rather than a generic green/red up/down color.
+const ASSET_COLORS: Record<LiveAsset, string> = {
+  BTC: '#F7931A',
+  ETH: '#627EEA',
+};
+
+const TARGET_LINE_COLOR = '#93a5ad';
+
 async function fetchCandlesInWindow(
   asset: LiveAsset,
   openMs: number,
@@ -47,6 +61,42 @@ async function fetchCandlesInWindow(
     .filter((c): c is CoinbaseCandle => Array.isArray(c) && typeof c[0] === 'number')
     .map((c) => ({ time: c[0] * 1000, price: c[4] }))
     .filter((p) => Number.isFinite(p.price) && p.time >= openMs && p.time <= closeMs);
+}
+
+// Custom label for the strike/target ReferenceLine — renders as a small
+// rounded pill anchored to the right edge of the plot, reading "Target".
+function TargetPillLabel(props: { viewBox?: { x?: number; y?: number; width?: number } }) {
+  const { viewBox } = props;
+  if (!viewBox || viewBox.x == null || viewBox.y == null || viewBox.width == null) return null;
+  const pillWidth = 46;
+  const pillHeight = 16;
+  const x = viewBox.x + viewBox.width - pillWidth - 4;
+  const y = viewBox.y - pillHeight / 2;
+
+  return (
+    <g>
+      <rect
+        x={x}
+        y={y}
+        width={pillWidth}
+        height={pillHeight}
+        rx={8}
+        fill="#eef3f4"
+        stroke="#e4eaec"
+      />
+      <text
+        x={x + pillWidth / 2}
+        y={y + pillHeight / 2 + 1}
+        textAnchor="middle"
+        dominantBaseline="middle"
+        fontSize={10.5}
+        fontWeight={700}
+        fill="#48606c"
+      >
+        Target
+      </text>
+    </g>
+  );
 }
 
 export function LivePriceChart({ market }: LivePriceChartProps) {
@@ -114,16 +164,16 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
     );
   }
 
-  const lastPrice = data.length > 0 ? data[data.length - 1].price : strike;
+  const lastPoint = data.length > 0 ? data[data.length - 1] : null;
+  const lastPrice = lastPoint ? lastPoint.price : strike;
   const resolvedClosePrice = market.resolution_price != null ? Number(market.resolution_price) : null;
   const headerPrice = isOpen ? (livePrice ?? lastPrice) : (resolvedClosePrice ?? lastPrice);
   const colorRefPrice = livePrice ?? lastPrice;
-  // App's yes/no tokens (tailwind.config.js) — reused here since Recharts
-  // strokes need a literal hex, not a Tailwind class.
   const isUp = colorRefPrice >= strike;
-  const lineColor = isUp ? '#2f7d5c' : '#c0504f';
-  const gradientId = isUp ? 'livePriceFillUp' : 'livePriceFillDown';
   const delta = headerPrice - strike;
+
+  const lineColor = ASSET_COLORS[series.asset];
+  const gradientId = `livePriceFill-${series.asset}`;
 
   const yDomain: [number, number] = (() => {
     const prices = data.map((p) => p.price);
@@ -137,15 +187,33 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
   return (
     <div className="rounded-2xl border border-border-c bg-white p-5">
       <div className="flex items-center justify-between">
-        <div className="flex items-baseline gap-2.5">
-          <span className={clsx('text-[32px] font-extrabold', isUp ? 'text-yes' : 'text-no')}>
-            {formatUsd(headerPrice)}
-          </span>
-          <span className={clsx('text-sm font-bold', isUp ? 'text-yes' : 'text-no')}>
-            {isUp ? '▲' : '▼'} {formatUsd(Math.abs(delta))} vs strike
-          </span>
+        <div className="flex items-center gap-4">
+          <div>
+            <div className="text-[11px] font-extrabold uppercase tracking-wide text-text-faint">
+              Price to beat
+            </div>
+            <div className="text-[30px] font-extrabold leading-tight text-text-primary">
+              {formatUsd(strike)}
+            </div>
+          </div>
+
+          <div className="h-9 w-px bg-border-c" />
+
+          <div>
+            <div className="text-[15px] font-bold text-text-primary">{formatUsd(headerPrice)}</div>
+            {isOpen ? (
+              <div className={clsx('text-xs font-bold', isUp ? 'text-yes' : 'text-no')}>
+                {isUp ? '▲' : '▼'} {formatUsd(Math.abs(delta))} vs target
+              </div>
+            ) : (
+              <div className={clsx('text-xs font-bold', isUp ? 'text-yes' : 'text-no')}>
+                {isUp ? '▲ Up' : '▼ Down'}
+              </div>
+            )}
+          </div>
         </div>
-        {isOpen ? (
+
+        {isOpen && (
           <span className="inline-flex items-center gap-1.5 text-[11px] font-extrabold uppercase tracking-wide text-text-muted">
             <span className="relative flex h-1.5 w-1.5">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal opacity-75" />
@@ -153,18 +221,14 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
             </span>
             Live
           </span>
-        ) : (
-          <span className={clsx('text-[13px] font-extrabold', isUp ? 'text-yes' : 'text-no')}>
-            {isUp ? '▲ Up' : '▼ Down'}
-          </span>
         )}
       </div>
 
-      <ResponsiveContainer width="100%" height={240}>
-        <AreaChart data={data} margin={{ top: 8, right: 8, left: -16, bottom: 0 }}>
+      <ResponsiveContainer width="100%" height={250}>
+        <AreaChart data={data} margin={{ top: 12, right: 8, left: -8, bottom: 0 }}>
           <defs>
             <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor={lineColor} stopOpacity={0.25} />
+              <stop offset="0%" stopColor={lineColor} stopOpacity={0.22} />
               <stop offset="100%" stopColor={lineColor} stopOpacity={0} />
             </linearGradient>
           </defs>
@@ -179,11 +243,12 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
             minTickGap={40}
           />
           <YAxis
+            orientation="right"
             domain={yDomain}
             tickFormatter={(v) => `$${Math.round(Number(v)).toLocaleString()}`}
             stroke="#93a5ad"
             tick={{ fontSize: 11 }}
-            width={56}
+            width={64}
           />
           <Tooltip
             contentStyle={{
@@ -197,23 +262,30 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
           />
           <ReferenceLine
             y={strike}
-            stroke="#93a5ad"
-            strokeDasharray="4 4"
-            label={{
-              value: `Strike $${Math.round(strike).toLocaleString()}`,
-              position: 'insideTopRight',
-              fontSize: 11,
-              fill: '#93a5ad',
-            }}
+            stroke={TARGET_LINE_COLOR}
+            strokeDasharray="5 5"
+            label={<TargetPillLabel />}
           />
           <Area
             type="monotone"
             dataKey="price"
             stroke={lineColor}
-            strokeWidth={3}
+            strokeWidth={2.5}
             fill={`url(#${gradientId})`}
+            dot={false}
+            activeDot={false}
             isAnimationActive={false}
           />
+          {lastPoint && (
+            <ReferenceDot
+              x={lastPoint.time}
+              y={lastPoint.price}
+              r={4}
+              fill={lineColor}
+              stroke="#fff"
+              strokeWidth={1.5}
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
     </div>

@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { parseAutoSeries, useCountdown } from '../lib/live';
+import { parseAutoSeries, useCountdown, type LiveAsset } from '../lib/live';
 import { priceYes } from '../lib/cpmm';
 import { formatUsd } from '../lib/format';
 import type { Market } from '../types';
@@ -7,6 +7,11 @@ import type { Market } from '../types';
 interface LiveMarketCardProps {
   market: Market;
 }
+
+const ASSET_NAMES: Record<LiveAsset, string> = {
+  BTC: 'Bitcoin',
+  ETH: 'Ethereum',
+};
 
 export function LiveMarketCard({ market }: LiveMarketCardProps) {
   const navigate = useNavigate();
@@ -53,7 +58,7 @@ export function LiveMarketCard({ market }: LiveMarketCardProps) {
       </div>
 
       <h3 className="line-clamp-2 text-[13.5px] font-bold leading-tight text-text-primary">
-        {market.question}
+        {series ? `${ASSET_NAMES[series.asset]} Up or Down (${series.label})` : market.question}
       </h3>
 
       <div className="text-2xl font-extrabold tabular-nums text-text-primary">

@@ -12,18 +12,24 @@ import { useAuthModal } from '../hooks/useAuthModal';
 import { addComment, getComments, getMarketBySlug, getMyPosition, getTrades } from '../lib/api';
 import { priceYes } from '../lib/cpmm';
 import { formatDate, formatDateTime, formatUsd } from '../lib/format';
-import { parseAutoSeries, useCountdown, useLiveTicker } from '../lib/live';
+import { localTime, localWindow, parseAutoSeries, useCountdown, useLiveTicker } from '../lib/live';
+import type { LiveAsset } from '../lib/live';
 
-// Small print near the trade widget for auto markets, e.g. "Auto-resolves at
-// 15:05 UTC. Winnings credited automatically." Formats close_time in UTC to
-// match the "HH:MM UTC" convention used in the market question itself.
-function formatUtcTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  const hh = String(d.getUTCHours()).padStart(2, '0');
-  const mm = String(d.getUTCMinutes()).padStart(2, '0');
-  return `${hh}:${mm} UTC`;
+const ASSET_NAMES: Record<LiveAsset, string> = {
+  BTC: 'Bitcoin',
+  ETH: 'Ethereum',
+};
+
+// The stored market.question/description use "HH:MM UTC" wording server-side
+// — for auto markets we never show those directly. Instead we derive a
+// tz-neutral title and rules string client-side from auto_series + close_time,
+// always rendered in the viewer's own local time.
+function autoMarketTitle(asset: LiveAsset, minutes: number): string {
+  return `${ASSET_NAMES[asset]} Up or Down (${minutes}m)`;
+}
+
+function autoMarketRules(asset: LiveAsset, strike: number | null, closeIso: string | null | undefined): string {
+  return `Resolves UP if ${ASSET_NAMES[asset]} is above the price to beat of ${formatUsd(strike)} at ${localTime(closeIso)}. Auto-resolved and settled instantly — winnings are credited automatically.`;
 }
 
 export default function MarketDetail() {
@@ -133,7 +139,8 @@ export default function MarketDetail() {
       <div className="mb-5">
         <div className="flex items-center gap-2 text-[12.5px] font-semibold text-text-muted">
           <span>
-            {market.category || 'Other'} · Resolves {formatDate(market.close_time)}
+            {market.category || 'Other'} · Resolves{' '}
+            {series ? localTime(market.close_time) : formatDate(market.close_time)}
           </span>
           {market.source === 'polymarket' && (
             <span
@@ -159,8 +166,13 @@ export default function MarketDetail() {
           )}
         </div>
         <h1 className="mt-1.5 text-2xl font-extrabold tracking-tight text-text-primary sm:text-[28px]">
-          {market.question}
+          {series ? autoMarketTitle(series.asset, series.minutes) : market.question}
         </h1>
+        {series && (
+          <p className="mt-1 text-[13px] font-semibold text-text-muted">
+            {localWindow(market.close_time, series.minutes)}
+          </p>
+        )}
         <div className="mt-2.5 flex flex-wrap items-center gap-3.5 text-[13px] font-semibold text-text-secondary">
           <span className="rounded-full bg-teal-tint px-3 py-1.5 font-extrabold text-teal-deep">
             {series ? 'Up' : 'Yes'} {Math.round(pYes * 100)}¢
@@ -257,7 +269,9 @@ export default function MarketDetail() {
               Description &amp; rules
             </h2>
             <p className="whitespace-pre-wrap text-sm leading-relaxed text-text-secondary">
-              {market.description || 'No description provided.'}
+              {series
+                ? autoMarketRules(series.asset, market.strike_price, market.close_time)
+                : market.description || 'No description provided.'}
             </p>
           </div>
 
@@ -322,14 +336,20 @@ export default function MarketDetail() {
           <TradeWidget market={market} />
           {series && (
             <div className="rounded-2xl bg-teal-tint px-[18px] py-3.5 text-[12.5px] font-semibold leading-relaxed text-teal-deep">
-              Auto-resolves at {formatUtcTime(market.close_time)}. Winnings credited
-              automatically.
+              Auto-resolves at {localTime(market.close_time)}. Winnings credited automatically.
             </div>
           )}
-          {market.description && (
+          {series ? (
             <div className="rounded-2xl bg-rules px-[18px] py-4 text-[13px] leading-relaxed text-rules-text">
-              <span className="font-extrabold">Rules:</span> {market.description}
+              <span className="font-extrabold">Rules:</span>{' '}
+              {autoMarketRules(series.asset, market.strike_price, market.close_time)}
             </div>
+          ) : (
+            market.description && (
+              <div className="rounded-2xl bg-rules px-[18px] py-4 text-[13px] leading-relaxed text-rules-text">
+                <span className="font-extrabold">Rules:</span> {market.description}
+              </div>
+            )
           )}
         </div>
       </div>

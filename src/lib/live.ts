@@ -55,6 +55,52 @@ function targetTime(closeTime: string): number {
   return Number.isFinite(parsed) ? parsed : Date.now();
 }
 
+// Auto-market questions/descriptions are stored with "HH:MM UTC" wording
+// server-side, but the UI must always show the viewer's own local time —
+// these helpers derive local, timezone-labeled strings client-side instead.
+
+const LOCAL_TIME_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+  timeZoneName: 'short',
+});
+
+const LOCAL_TIME_NO_TZ_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  hour: 'numeric',
+  minute: '2-digit',
+});
+
+const LOCAL_DATE_FORMATTER = new Intl.DateTimeFormat(undefined, {
+  month: 'short',
+  day: 'numeric',
+});
+
+/** e.g. "8:10 PM PDT" — the viewer's local time with a timezone abbreviation. */
+export function localTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return LOCAL_TIME_FORMATTER.format(d);
+}
+
+/**
+ * e.g. "Jul 7, 8:05 – 8:10 PM PDT" — the local open→close window for an auto
+ * market, given its close time and duration in minutes. The open time omits
+ * am/pm and the timezone (shown once, at the end) to read as a single range.
+ */
+export function localWindow(closeIso: string | null | undefined, minutes: number): string {
+  if (!closeIso) return '—';
+  const close = new Date(closeIso);
+  if (Number.isNaN(close.getTime())) return '—';
+  const open = new Date(close.getTime() - minutes * 60000);
+
+  const date = LOCAL_DATE_FORMATTER.format(close);
+  const openText = LOCAL_TIME_NO_TZ_FORMATTER.format(open).replace(/\s?[AP]M$/i, '');
+  const closeText = LOCAL_TIME_FORMATTER.format(close);
+
+  return `${date}, ${openText} – ${closeText}`;
+}
+
 export function useCountdown(closeTime: string): { msLeft: number; text: string } {
   const target = useMemo(() => targetTime(closeTime), [closeTime]);
   const [msLeft, setMsLeft] = useState(() => Math.max(0, target - Date.now()));
@@ -109,9 +155,9 @@ interface CoinbaseTickerMessage {
   price?: string;
 }
 
-// Keep the chart's point buffer bounded — this is a live 1s stream that could
-// otherwise grow unbounded for a market left open in a background tab.
-const LIVE_TICKER_MAX_POINTS = 1200;
+// Keep the chart's point buffer bounded — this is a live 250ms stream that
+// could otherwise grow unbounded for a market left open in a background tab.
+const LIVE_TICKER_MAX_POINTS = 1800;
 // After this many consecutive failed WebSocket opens, stop retrying the
 // socket and fall back to polling — avoids a tight reconnect loop when the
 // feed is unreachable (e.g. blocked by a network/proxy).
@@ -120,8 +166,9 @@ const MAX_WS_OPEN_ATTEMPTS = 2;
 /**
  * Real-time streaming price for an auto-market's underlying asset. Opens a
  * Coinbase Exchange WebSocket ticker feed and updates `price` on every tick
- * (sub-second cadence), while `points` is throttled to ~1/sec so charts stay
- * light. Falls back to 1s REST polling if the socket can't be opened at all.
+ * (sub-second cadence), while `points` is throttled to ~4/sec (250ms buckets)
+ * so charts stay light while still feeling live. Falls back to 1s REST
+ * polling if the socket can't be opened at all.
  *
  * Hooks must run unconditionally, so this is safe to call with `asset: null`
  * or `enabled: false` — it simply stays idle until both are truthy.
@@ -152,10 +199,10 @@ export function useLiveTicker(asset: LiveAsset | null, enabled: boolean): LiveTi
     function pushPrice(next: number) {
       if (cancelled) return;
       setPrice(next);
-      // Dedupe the buffered-points stream to at most one entry per second by
-      // flooring to the second — the `price` state above still updates on
+      // Dedupe the buffered-points stream to at most one entry per 250ms by
+      // flooring to that bucket — the `price` state above still updates on
       // every tick regardless.
-      const bucket = Math.floor(Date.now() / 1000) * 1000;
+      const bucket = Math.floor(Date.now() / 250) * 250;
       if (lastBucketRef.current === bucket) return;
       lastBucketRef.current = bucket;
       setPoints((prev) => {
