@@ -41,8 +41,8 @@ Binary markets (YES/NO), USDC-denominated (play-money ledger, `numeric(18,6)`).
 ## Schema (tables — all in `public`)
 
 - `profiles` — `id uuid PK → auth.users`, `username text unique`, `wallet_address text`,
-  `balance numeric(18,6) default 0`, `is_admin bool default false`, `last_faucet_at timestamptz`, `created_at`.
-  Auto-created by trigger on `auth.users` insert.
+  `tron_address text null`, `balance numeric(18,6) default 0`, `is_admin bool default false`,
+  `last_faucet_at timestamptz`, `created_at`. Auto-created by trigger on `auth.users` insert.
 - `markets` — `id uuid`, `slug text unique`, `question text`, `description text`,
   `category text`, `image_url text`, `creator_id uuid`, `yes_pool numeric`, `no_pool numeric`,
   `fee_bps int default 200`, `fee_collected numeric default 0`, `volume numeric default 0`,
@@ -53,10 +53,13 @@ Binary markets (YES/NO), USDC-denominated (play-money ledger, `numeric(18,6)`).
 - `trades` — `id`, `market_id`, `user_id`, `action text ('buy','sell')`, `outcome text ('yes','no')`,
   `amount numeric` (USDC in/out), `shares numeric`, `price numeric` (avg execution price),
   `price_yes_after numeric` (for charts), `fee numeric`, `created_at`.
-- `transactions` — ledger: `id`, `user_id`, `type text ('faucet','deposit','buy','sell','redeem')`,
+- `transactions` — ledger: `id`, `user_id`, `type text ('faucet','deposit','buy','sell','redeem','withdrawal','withdrawal_refund')`,
   `amount numeric` (signed), `market_id uuid null`, `ref text null` (tx hash etc), `created_at`.
-- `deposits` — `id`, `user_id`, `tx_hash text unique`, `amount_eth numeric`, `amount_usdc numeric`,
-  `status text ('confirmed','rejected')`, `created_at`.
+- `deposits` — `id`, `user_id`, `tx_hash text unique`, `amount_eth numeric null`, `amount_usdc numeric`,
+  `chain text ('sepolia'|'tron')`, `status text ('confirmed','rejected')`, `created_at`.
+- `withdrawals` — `id`, `user_id`, `chain text ('sepolia'|'tron')`, `dest_address text`,
+  `amount_usdc numeric`, `amount_native numeric`, `tx_hash text null`, `status text ('pending'|'sent'|'failed')`,
+  `error text null`, `created_at`, `updated_at`.
 - `comments` — `id`, `market_id`, `user_id`, `body text`, `created_at`.
 
 ## RPCs (SECURITY DEFINER, `auth.uid()` inside; GRANT EXECUTE to authenticated)
@@ -100,17 +103,33 @@ Migration: `supabase/migrations/20260708000010_live_crypto_markets.sql`.
 
 ## Crypto backing
 
+### Sepolia ETH deposits
 - MetaMask connect (ethers v6 BrowserProvider); store address on profile.
 - Deposit: user sends Sepolia ETH to house address `VITE_HOUSE_ADDRESS`; app submits tx hash
   to Netlify function `verify-deposit` which checks via `SEPOLIA_RPC_URL`
   (to: house address, status success, ≥1 confirmation), converts at **1 ETH = 3000 USDC**,
   calls `credit_deposit` with service role. Chain: Sepolia (chainId 11155111).
+
+### Tron USDT deposits
+- Store Tron address on profile (`profiles.tron_address`, client-updatable like `wallet_address`).
+- Deposit: user sends Nile testnet USDT (contract `VITE_TRON_USDT_CONTRACT`) to house address
+  `VITE_TRON_HOUSE_ADDRESS`; app submits transaction ID to Netlify function `verify-tron-deposit`
+  which verifies on Nile (via `TRON_FULL_HOST`), converts at **1 USDT = 1 USDC**, calls
+  `credit_deposit` with service role. Nile USDT faucet: https://nileex.io/join/getJoinPage.
+
+### Faucet & withdrawals
 - Faucet button for demo play money (no wallet needed).
+- Withdrawals: user submits destination address and amount; Netlify function `/api/withdraw`
+  debits balance, creates `withdrawals` record, sends native tokens (ETH or USDT) to dest,
+  writes transaction ledger entry. Refunds balance on send failure.
 
 ## Env vars
 
-Frontend (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_HOUSE_ADDRESS`, `VITE_CHAIN_ID=11155111`
-Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SEPOLIA_RPC_URL`, `HOUSE_ADDRESS`, `POLYMARKET_SYNC_SECRET`
+Frontend (Vite): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_HOUSE_ADDRESS`, `VITE_CHAIN_ID=11155111`,
+  `VITE_TRON_HOUSE_ADDRESS`, `VITE_TRON_USDT_CONTRACT`.
+Functions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SEPOLIA_RPC_URL`, `HOUSE_ADDRESS`,
+  `HOUSE_PRIVATE_KEY` (Sepolia payouts), `TRON_FULL_HOST`, `TRON_HOUSE_ADDRESS`, `TRON_HOUSE_PRIVATE_KEY`,
+  `TRON_USDT_CONTRACT`, `POLYMARKET_SYNC_SECRET`.
 
 ## Polymarket sync
 

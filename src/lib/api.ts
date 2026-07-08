@@ -17,6 +17,7 @@ import type {
   Resolution,
   Trade,
   Transaction,
+  Withdrawal,
 } from '../types';
 
 function fail(error: { message: string } | null, fallback: string): never {
@@ -230,6 +231,18 @@ export async function updateWalletAddress(address: string): Promise<void> {
   if (error) fail(error, 'Failed to save wallet address');
 }
 
+export async function updateTronAddress(address: string): Promise<void> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) throw new Error('Not signed in');
+
+  const { error } = await supabase
+    .from('profiles')
+    .update({ tron_address: address })
+    .eq('id', uid);
+  if (error) fail(error, 'Failed to save Tron address');
+}
+
 // ---------------------------------------------------------------------------
 // Deposits (crypto backing)
 // ---------------------------------------------------------------------------
@@ -283,6 +296,103 @@ export async function verifyDeposit(txHash: string): Promise<VerifyDepositResult
     throw new Error(body.error || 'Failed to verify deposit');
   }
   return body;
+}
+
+export interface VerifyTronDepositResult {
+  status: 'confirmed' | 'duplicate';
+  tx_hash?: string;
+  amount_usdt?: number;
+  amount_usdc?: number;
+  error?: string;
+}
+
+// Calls the Netlify function that verifies a Tron USDT deposit and credits
+// the user's balance at 1 USDT = 1 USDC. Sends the current Supabase access
+// token so the function can resolve the caller server-side via `auth.getUser(jwt)`.
+export async function verifyTronDeposit(txId: string): Promise<VerifyTronDepositResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error('You must be signed in to verify a deposit');
+
+  const res = await fetch('/api/verify-tron-deposit', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({ txId }),
+  });
+
+  const body = (await res.json().catch(() => ({}))) as VerifyTronDepositResult;
+
+  if (res.status === 409) {
+    throw new Error(body.error || 'This deposit has already been credited.');
+  }
+  if (!res.ok) {
+    throw new Error(body.error || 'Failed to verify deposit');
+  }
+  return body;
+}
+
+// ---------------------------------------------------------------------------
+// Withdrawals (crypto → user)
+// ---------------------------------------------------------------------------
+
+export async function getMyWithdrawals(limit = 5): Promise<Withdrawal[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return [];
+
+  const { data, error } = await supabase
+    .from('withdrawals')
+    .select('*')
+    .eq('user_id', uid)
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) fail(error, 'Failed to load withdrawals');
+  return (data ?? []) as Withdrawal[];
+}
+
+export interface WithdrawResult {
+  status: 'sent';
+  withdrawal_id: string;
+  tx_hash: string;
+  chain: 'sepolia' | 'tron';
+  amount_usdc: number;
+  amount_native: number;
+  explorer_url: string;
+}
+
+// Calls the Netlify function that processes a withdrawal. Sends the current
+// Supabase access token so the function can resolve the caller server-side.
+export async function requestWithdrawal(input: {
+  chain: 'sepolia' | 'tron';
+  amountUsdc: number;
+  destAddress: string;
+}): Promise<WithdrawResult> {
+  const { data: sessionData } = await supabase.auth.getSession();
+  const accessToken = sessionData.session?.access_token;
+  if (!accessToken) throw new Error('You must be signed in to withdraw');
+
+  const res = await fetch('/api/withdraw', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+    },
+    body: JSON.stringify({
+      chain: input.chain,
+      amountUsdc: input.amountUsdc,
+      destAddress: input.destAddress,
+    }),
+  });
+
+  const body = (await res.json().catch(() => ({}))) as WithdrawResult & { error?: string };
+
+  if (!res.ok) {
+    throw new Error(body.error || 'Withdrawal failed');
+  }
+  return body as WithdrawResult;
 }
 
 // ---------------------------------------------------------------------------

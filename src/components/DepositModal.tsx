@@ -6,10 +6,11 @@ import { useAuthModal } from '../hooks/useAuthModal';
 import { useFaucet } from '../hooks/useFaucet';
 import { useToast } from '../hooks/useToast';
 import { useWallet } from '../hooks/useWallet';
-import { getMyDeposits, verifyDeposit } from '../lib/api';
+import { getMyDeposits, updateTronAddress, verifyDeposit, verifyTronDeposit } from '../lib/api';
 import { formatDateTime, formatUsd } from '../lib/format';
 
 const HOUSE_ADDRESS = (import.meta.env.VITE_HOUSE_ADDRESS as string) || '';
+const TRON_HOUSE_ADDRESS = (import.meta.env.VITE_TRON_HOUSE_ADDRESS as string) || '';
 const RATE_USDC_PER_ETH = 3000;
 const DEFAULT_AMOUNT = '0.01';
 
@@ -24,9 +25,10 @@ function truncateAddress(address: string): string {
 }
 
 type SendState = 'idle' | 'sending' | 'confirming' | 'verifying' | 'error';
+type DepositChain = 'sepolia' | 'tron';
 
 export function DepositModal({ open, onClose }: DepositModalProps) {
-  const { session } = useAuth();
+  const { session, profile, refetchProfile } = useAuth();
   const { openAuthModal } = useAuthModal();
   const { showToast } = useToast();
   const queryClient = useQueryClient();
@@ -41,6 +43,7 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   } = useWallet();
   const faucet = useFaucet();
 
+  const [depositChain, setDepositChain] = useState<DepositChain>('sepolia');
   const [amount, setAmount] = useState(DEFAULT_AMOUNT);
   const [sendState, setSendState] = useState<SendState>('idle');
   const [sendError, setSendError] = useState<string | null>(null);
@@ -50,6 +53,12 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
   const [pastedHash, setPastedHash] = useState('');
   const [pasteState, setPasteState] = useState<'idle' | 'verifying' | 'error'>('idle');
   const [pasteError, setPasteError] = useState<string | null>(null);
+
+  const [tronAddress, setTronAddress] = useState(profile?.tron_address ?? '');
+  const [tronTxId, setTronTxId] = useState('');
+  const [tronTxState, setTronTxState] = useState<'idle' | 'verifying' | 'error'>('idle');
+  const [tronTxError, setTronTxError] = useState<string | null>(null);
+  const [tronAddressSaving, setTronAddressSaving] = useState(false);
 
   const { data: deposits } = useQuery({
     queryKey: ['deposits'],
@@ -68,6 +77,9 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     setPastedHash('');
     setPasteState('idle');
     setPasteError(null);
+    setTronTxId('');
+    setTronTxState('idle');
+    setTronTxError(null);
   }
 
   function handleClose() {
@@ -175,6 +187,47 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
     }
   }
 
+  async function handleTronAddressSave() {
+    if (!tronAddress.trim()) return;
+    try {
+      setTronAddressSaving(true);
+      await updateTronAddress(tronAddress.trim());
+      await refetchProfile();
+      showToast('Tron address saved', 'success');
+    } catch (err) {
+      showToast(describeError(err), 'error');
+    } finally {
+      setTronAddressSaving(false);
+    }
+  }
+
+  async function handleTronTxSubmit() {
+    setTronTxError(null);
+    const trimmed = tronTxId.trim();
+    if (!trimmed) {
+      setTronTxState('error');
+      setTronTxError('Enter a transaction ID.');
+      return;
+    }
+
+    try {
+      setTronTxState('verifying');
+      const result = await verifyTronDeposit(trimmed);
+      await invalidateAfterCredit();
+
+      if (result.status === 'duplicate') {
+        showToast('This deposit was already credited.', 'info');
+      } else {
+        showToast(`+${formatUsd(result.amount_usdc ?? 0)} credited`, 'success');
+      }
+      setTronTxState('idle');
+      setTronTxId('');
+    } catch (err) {
+      setTronTxState('error');
+      setTronTxError(describeError(err));
+    }
+  }
+
   const previewUsdc = (Number(amount) || 0) * RATE_USDC_PER_ETH;
   const sending = sendState === 'sending' || sendState === 'confirming' || sendState === 'verifying';
 
@@ -207,9 +260,35 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
 
         {/* Section B: Deposit crypto */}
         <section className="rounded-xl border border-border-c p-4">
-          <h3 className="text-sm font-extrabold text-text-primary">Deposit crypto (Sepolia testnet)</h3>
+          <h3 className="text-sm font-extrabold text-text-primary">Deposit crypto</h3>
 
-          {!session ? (
+          {/* Chain tabs */}
+          <div className="mt-3 mb-4 flex gap-2">
+            <button
+              onClick={() => setDepositChain('sepolia')}
+              className={`flex-1 rounded-xl py-2 text-sm font-bold transition ${
+                depositChain === 'sepolia'
+                  ? 'bg-teal text-white'
+                  : 'bg-subtle text-text-secondary hover:bg-[#e4eaec]'
+              }`}
+            >
+              ETH · Sepolia
+            </button>
+            <button
+              onClick={() => setDepositChain('tron')}
+              className={`flex-1 rounded-xl py-2 text-sm font-bold transition ${
+                depositChain === 'tron'
+                  ? 'bg-teal text-white'
+                  : 'bg-subtle text-text-secondary hover:bg-[#e4eaec]'
+              }`}
+            >
+              USDT · Tron
+            </button>
+          </div>
+
+          {depositChain === 'sepolia' ? (
+            <>
+              {!session ? (
             <div className="mt-3">
               <p className="text-[13px] font-medium text-text-muted">
                 Sign in to deposit Sepolia ETH and back your account.
@@ -346,6 +425,107 @@ export function DepositModal({ open, onClose }: DepositModalProps) {
                 )}
               </div>
             </div>
+          )}
+            </>
+          ) : (
+            <>
+              {!session ? (
+                <div className="mt-3">
+                  <p className="text-[13px] font-medium text-text-muted">
+                    Sign in to deposit Tron USDT and back your account.
+                  </p>
+                  <button
+                    onClick={() => {
+                      handleClose();
+                      openAuthModal('signin');
+                    }}
+                    className="mt-3 rounded-xl bg-teal px-4 py-2 text-sm font-bold text-white transition hover:bg-teal-deep"
+                  >
+                    Sign in
+                  </button>
+                </div>
+              ) : (
+                <div className="mt-3 flex flex-col gap-3">
+                  <label className="text-xs font-bold text-text-muted">
+                    Your Tron address
+                    <div className="mt-1 flex gap-2">
+                      <input
+                        type="text"
+                        value={tronAddress}
+                        onChange={(e) => setTronAddress(e.target.value)}
+                        disabled={tronAddressSaving}
+                        placeholder="T…"
+                        className="flex-1 rounded-xl border border-[#dfe7ea] bg-white px-3.5 py-2.5 font-mono text-sm text-text-primary outline-none focus:border-teal disabled:opacity-60"
+                      />
+                      <button
+                        onClick={() => void handleTronAddressSave()}
+                        disabled={tronAddressSaving || !tronAddress.trim()}
+                        className="rounded-xl bg-subtle px-3 py-2.5 text-xs font-bold text-text-secondary transition hover:bg-[#e4eaec] disabled:opacity-60"
+                      >
+                        {tronAddressSaving ? 'Saving…' : 'Save'}
+                      </button>
+                    </div>
+                  </label>
+                  <p className="text-[13px] font-medium text-text-muted">
+                    Deposits must be sent FROM this address so we can credit your account.
+                  </p>
+
+                  <div className="flex items-center justify-between rounded-lg bg-subtle px-3 py-2 text-[13px] font-semibold text-text-secondary">
+                    <span>House deposit address</span>
+                    <span className="flex items-center gap-2">
+                      <span className="font-mono">{truncateAddress(TRON_HOUSE_ADDRESS)}</span>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(TRON_HOUSE_ADDRESS).catch(() => {});
+                          setCopied(true);
+                          setTimeout(() => setCopied(false), 2000);
+                        }}
+                        className="rounded-md bg-white px-2 py-0.5 text-xs font-bold text-teal-deep transition hover:bg-teal-tint"
+                      >
+                        {copied ? 'Copied' : 'Copy'}
+                      </button>
+                    </span>
+                  </div>
+
+                  <p className="text-[13px] font-medium text-text-muted">
+                    Get test USDT on Nile from the{' '}
+                    <a
+                      href="https://nileex.io/join/getJoinPage"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="font-bold text-teal-deep hover:underline"
+                    >
+                      faucet
+                    </a>
+                    , then send USDT to the house address above from your Tron wallet. 1 USDT = 1 USDC credited.
+                  </p>
+
+                  <label className="text-xs font-bold text-text-muted">
+                    Transaction ID
+                    <input
+                      type="text"
+                      placeholder="Tx ID"
+                      value={tronTxId}
+                      onChange={(e) => setTronTxId(e.target.value)}
+                      disabled={tronTxState === 'verifying'}
+                      className="mt-1 w-full rounded-xl border border-[#dfe7ea] bg-white px-3.5 py-2.5 text-sm text-text-primary outline-none focus:border-teal disabled:opacity-60"
+                    />
+                  </label>
+
+                  <button
+                    onClick={() => void handleTronTxSubmit()}
+                    disabled={tronTxState === 'verifying' || !tronTxId.trim()}
+                    className="rounded-xl bg-subtle py-2 text-xs font-bold text-text-secondary transition hover:bg-[#e4eaec] disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {tronTxState === 'verifying' ? 'Verifying…' : 'Verify transaction'}
+                  </button>
+
+                  {tronTxState === 'error' && tronTxError && (
+                    <p className="text-xs font-medium text-no">{tronTxError}</p>
+                  )}
+                </div>
+              )}
+            </>
           )}
 
           {session && deposits && deposits.length > 0 && (
