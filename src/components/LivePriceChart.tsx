@@ -21,7 +21,7 @@ import {
   YAxis,
 } from 'recharts';
 import clsx from 'clsx';
-import { parseAutoSeries, useLiveTicker, type LiveAsset } from '../lib/live';
+import { parseAutoSeries, useAnimatedNumber, useLiveTicker, type LiveAsset } from '../lib/live';
 import { formatUsd } from '../lib/format';
 import type { Market } from '../types';
 
@@ -168,9 +168,15 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
   const lastPrice = lastPoint ? lastPoint.price : strike;
   const resolvedClosePrice = market.resolution_price != null ? Number(market.resolution_price) : null;
   const headerPrice = isOpen ? (livePrice ?? lastPrice) : (resolvedClosePrice ?? lastPrice);
+  // Animate the displayed price so it rolls through intermediate values on
+  // every tick ("odometer" effect) instead of snapping. The up/down color and
+  // arrow below intentionally use the REAL (non-animated) price vs strike so
+  // they never flicker mid-tween while the display value crosses the strike.
+  const animatedHeaderPrice = useAnimatedNumber(headerPrice);
+  const displayHeaderPrice = animatedHeaderPrice ?? headerPrice;
   const colorRefPrice = livePrice ?? lastPrice;
   const isUp = colorRefPrice >= strike;
-  const delta = headerPrice - strike;
+  const delta = displayHeaderPrice - strike;
 
   const lineColor = ASSET_COLORS[series.asset];
   const gradientId = `livePriceFill-${series.asset}`;
@@ -200,7 +206,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
           <div className="h-9 w-px bg-border-c" />
 
           <div>
-            <div className="text-[15px] font-bold text-text-primary">{formatUsd(headerPrice)}</div>
+            <div className="text-[15px] font-bold text-text-primary">{formatUsd(displayHeaderPrice)}</div>
             {isOpen ? (
               <div className={clsx('text-xs font-bold', isUp ? 'text-yes' : 'text-no')}>
                 {isUp ? '▲' : '▼'} {formatUsd(Math.abs(delta))} vs target
