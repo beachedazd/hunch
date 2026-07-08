@@ -29,7 +29,11 @@ const CATEGORY_TAG_SLUGS: Record<string, string> = {
 };
 
 const EVENTS_LIMIT = 10;
-const IMPORT_PER_CATEGORY = 4;
+// Steady-state target: keep at most this many *open* mirrored markets per
+// category. Each run only imports enough to top back up to this number, so
+// repeated runs (e.g. the hourly cron) converge instead of importing a fresh
+// batch every time. As mirrored markets resolve, the freed budget backfills.
+const TARGET_OPEN_PER_CATEGORY = 4;
 const MIN_VOLUME = 10_000;
 const MIN_YES_PRICE = 0.02;
 const MAX_YES_PRICE = 0.98;
@@ -208,18 +212,30 @@ async function runResolutionPass(supabase: SupabaseClient, summary: SyncSummary)
 // ---- (2) import pass --------------------------------------------------------
 
 async function runImportPass(supabase: SupabaseClient, summary: SyncSummary): Promise<void> {
-  const { data: existingRows, error } = await supabase.from('markets').select('polymarket_id').eq('source', 'polymarket');
+  const { data: existingRows, error } = await supabase
+    .from('markets')
+    .select('polymarket_id, category, status')
+    .eq('source', 'polymarket');
 
   if (error) {
     summary.errors.push(`Failed to load existing imported markets: ${error.message}`);
     return;
   }
 
-  const existingIds = new Set(
-    (existingRows ?? [])
-      .map((r) => (r as { polymarket_id: string | null }).polymarket_id)
-      .filter((id): id is string => Boolean(id))
-  );
+  type ExistingRow = { polymarket_id: string | null; category: string | null; status: string };
+  const rows = (existingRows ?? []) as ExistingRow[];
+
+  // Every already-imported market id, so we never import a duplicate.
+  const existingIds = new Set(rows.map((r) => r.polymarket_id).filter((id): id is string => Boolean(id)));
+
+  // How many *open* mirrored markets each category already has, so we only
+  // top up to TARGET_OPEN_PER_CATEGORY rather than importing a new batch every run.
+  const openCountByCategory = new Map<string, number>();
+  for (const r of rows) {
+    if (r.status === 'open' && r.category) {
+      openCountByCategory.set(r.category, (openCountByCategory.get(r.category) ?? 0) + 1);
+    }
+  }
 
   // A given market can appear under multiple tags/categories via its event;
   // dedupe by market id across categories so we don't consider it twice.
@@ -227,6 +243,10 @@ async function runImportPass(supabase: SupabaseClient, summary: SyncSummary): Pr
   const minCloseTimeMs = Date.now() + MIN_HOURS_TO_CLOSE * 60 * 60 * 1000;
 
   for (const [category, tagSlug] of Object.entries(CATEGORY_TAG_SLUGS)) {
+    // Only import enough to bring this category up to the steady-state target.
+    const budget = TARGET_OPEN_PER_CATEGORY - (openCountByCategory.get(category) ?? 0);
+    if (budget <= 0) continue;
+
     try {
       const events = await gammaFetch<GammaEvent[]>(
         `/events?closed=false&limit=${EVENTS_LIMIT}&tag_slug=${encodeURIComponent(tagSlug)}&order=volume24hr&ascending=false`
@@ -267,7 +287,7 @@ async function runImportPass(supabase: SupabaseClient, summary: SyncSummary): Pr
 
       let importedForCategory = 0;
       for (const candidate of candidates) {
-        if (importedForCategory >= IMPORT_PER_CATEGORY) break;
+        if (importedForCategory >= budget) break;
         if (existingIds.has(candidate.market.id)) continue;
 
         try {
