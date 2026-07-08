@@ -5,6 +5,8 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { priceYes } from './cpmm';
+import type { Market } from '../types';
 
 export type LiveAsset = 'BTC' | 'ETH';
 
@@ -36,6 +38,92 @@ export function parseAutoSeries(series: string | null | undefined): ParsedAutoSe
     label: `${minutes}m`,
     minutes,
   };
+}
+
+// ---- Model-based live odds (see docs/superpowers/specs/2026-07-08-live-crypto-model-odds-design.md) ----
+// The auto crypto markets otherwise sit frozen at 50/50 under low volume. We
+// price them off a driftless log-normal model of the remaining move, blended
+// toward any real traded price by volume. The SAME constants/formula live in
+// SQL (migration 20260708000011) — keep them in sync.
+
+const ANNUAL_VOL: Record<LiveAsset, number> = { BTC: 0.5, ETH: 0.65 };
+const YEAR_SECONDS = 31_557_600; // 365.25 * 24 * 3600
+const PRICE_CLAMP_MIN = 0.02;
+const PRICE_CLAMP_MAX = 0.98;
+const BLEND_K = 250; // half the 500 window seed
+
+function clampPrice(p: number): number {
+  return Math.min(PRICE_CLAMP_MAX, Math.max(PRICE_CLAMP_MIN, p));
+}
+
+// Abramowitz-Stegun 7.1.26 erf approximation (max error ~1.5e-7).
+function erf(x: number): number {
+  const sign = x < 0 ? -1 : 1;
+  const ax = Math.abs(x);
+  const t = 1 / (1 + 0.3275911 * ax);
+  const y =
+    1 -
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) *
+      t *
+      Math.exp(-ax * ax);
+  return sign * y;
+}
+
+/** Standard normal CDF. */
+export function normCdf(x: number): number {
+  return 0.5 * (1 + erf(x / Math.SQRT2));
+}
+
+/**
+ * Fair YES ("Up") probability for an auto up/down market: the chance the live
+ * price ends above the strike by close, modelled as a driftless log-normal
+ * walk. Returns 0.5 for any unusable input. Clamped to [0.02, 0.98].
+ */
+export function modelPriceYes(
+  asset: LiveAsset,
+  strike: number | null | undefined,
+  closeTimeIso: string | null | undefined,
+  livePrice: number | null | undefined,
+  nowMs: number = Date.now()
+): number {
+  if (
+    strike == null || !(strike > 0) ||
+    livePrice == null || !Number.isFinite(livePrice) || !(livePrice > 0) ||
+    !closeTimeIso
+  ) {
+    return 0.5;
+  }
+  const closeMs = new Date(closeTimeIso).getTime();
+  if (!Number.isFinite(closeMs)) return 0.5;
+
+  const tauSeconds = Math.max((closeMs - nowMs) / 1000, 1);
+  const sigmaTau = ANNUAL_VOL[asset] * Math.sqrt(tauSeconds / YEAR_SECONDS);
+  if (!(sigmaTau > 0)) return 0.5;
+
+  const z = Math.log(livePrice / strike) / sigmaTau;
+  return clampPrice(normCdf(z));
+}
+
+/**
+ * Displayed YES price for a market. For non-auto markets (or when the live
+ * price/strike is unavailable) this is exactly the CPMM pool price. For auto
+ * markets it blends the model price toward the traded pool price by volume, so
+ * low-volume windows show the model and busy ones show real trading.
+ */
+export function blendedPriceYes(
+  market: Market,
+  livePrice: number | null | undefined,
+  nowMs: number = Date.now()
+): number {
+  const traded = priceYes(market.yes_pool, market.no_pool);
+  const series = parseAutoSeries(market.auto_series);
+  if (!series || market.strike_price == null || livePrice == null || !Number.isFinite(livePrice)) {
+    return traded;
+  }
+  const model = modelPriceYes(series.asset, market.strike_price, market.close_time, livePrice, nowMs);
+  const volume = Number.isFinite(market.volume) && market.volume > 0 ? market.volume : 0;
+  const weight = BLEND_K / (BLEND_K + volume);
+  return clampPrice(weight * model + (1 - weight) * traded);
 }
 
 function formatCountdown(msLeft: number): string {
@@ -307,4 +395,94 @@ export function useLiveTicker(asset: LiveAsset | null, enabled: boolean): LiveTi
   }, [asset, enabled]);
 
   return { price, points, connected };
+}
+
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3);
+}
+
+/**
+ * Smoothly tweens a displayed number toward `target` whenever it changes,
+ * so a fast-ticking live price (sub-second WS updates) reads as a rolling
+ * "odometer" cycling through intermediate values instead of jumping between
+ * ticks. Uses requestAnimationFrame with an ease-out curve; if `target`
+ * changes mid-tween, the animation retargets smoothly from whatever value is
+ * currently displayed (never snaps), so overlapping updates blend into
+ * continuous motion.
+ *
+ * The very first non-null target is shown instantly (no count-up from
+ * nothing/zero) — animation only kicks in between subsequent targets, which
+ * keeps the roll limited to the small tick-to-tick deltas.
+ */
+export function useAnimatedNumber(target: number | null, durationMs = 300): number | null {
+  const [display, setDisplay] = useState<number | null>(null);
+  const displayRef = useRef<number | null>(null);
+  const rafRef = useRef<number | null>(null);
+  const cancelledRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      cancelledRef.current = true;
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (target == null) {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      displayRef.current = null;
+      setDisplay(null);
+      return;
+    }
+
+    // First value ever shown — set instantly, no roll from nothing.
+    if (displayRef.current == null) {
+      displayRef.current = target;
+      setDisplay(target);
+      return;
+    }
+
+    const from = displayRef.current;
+    const to = target;
+    if (from === to) return;
+
+    if (rafRef.current != null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+
+    const start = performance.now();
+
+    function step(now: number) {
+      if (cancelledRef.current) return;
+      const elapsed = now - start;
+      const t = durationMs <= 0 ? 1 : Math.min(1, elapsed / durationMs);
+      const eased = easeOutCubic(t);
+      const next = from + (to - from) * eased;
+
+      displayRef.current = next;
+      setDisplay(next);
+
+      if (t < 1) {
+        rafRef.current = requestAnimationFrame(step);
+      } else {
+        rafRef.current = null;
+      }
+    }
+
+    rafRef.current = requestAnimationFrame(step);
+
+    return () => {
+      if (rafRef.current != null) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, durationMs]);
+
+  return display;
 }
