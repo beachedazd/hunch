@@ -101,6 +101,32 @@ Migration: `supabase/migrations/20260708000010_live_crypto_markets.sql`.
   Live rail on Home, Up/Down trade labels, strike-vs-live-spot strip on detail.
   Home grid excludes auto markets (`listMarkets(..., { excludeAuto: true })`).
 
+### Live model odds (low-volume pricing)
+
+With near-zero real volume these markets would otherwise sit frozen at 50/50.
+Instead their odds track a fair-value model of the remaining move
+(migration `20260708000011_auto_market_odds_sync.sql`; spec
+`docs/superpowers/specs/2026-07-08-live-crypto-model-odds-design.md`):
+
+- Model: `p_yes = Φ( ln(S / strike) / (σ_ann · √(τ_seconds / 31_557_600)) )`,
+  clamped to `[0.02, 0.98]`. `σ_ann` = **BTC 0.50, ETH 0.65** (hand-tuned
+  constants). `Φ` = normal CDF via the Abramowitz-Stegun 7.1.26 erf approximation.
+- Volume blend: `weight = 250 / (250 + volume)`,
+  `target = weight·model + (1 − weight)·traded_price`. Low volume shows the model;
+  as real trades accumulate, the traded price takes over.
+- **Display** is computed client-side in `src/lib/live.ts`
+  (`normCdf` / `modelPriceYes` / `blendedPriceYes`) from the browser's spot polls
+  (`useSpotPrice`) / live ticker — no added server cost. Used by `LiveMarketCard`,
+  `MarketCard`, `MarketDetail`, `TradeWidget` (auto markets only; non-auto fall
+  back to the exact pool price).
+- **Execution** is synced by `sync_auto_market_odds(market_id)` (SECURITY DEFINER,
+  `authenticated`) which fetches the live price, computes the same blended target,
+  and repositions the CPMM pool **preserving `k = yes_pool·no_pool`** — no
+  balance/share changes (house buffer funds payouts). Throttled ≥5s
+  (`markets.last_odds_sync_at`). `TradeWidget` calls it on engage so a buy executes
+  at ~the shown odds. `buy_shares`/`sell_shares` and `tick_auto_markets` are unchanged.
+- The TS and SQL copies of the constants/formula MUST stay in sync.
+
 ## Crypto backing
 
 ### Sepolia ETH deposits
