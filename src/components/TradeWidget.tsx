@@ -1,12 +1,13 @@
 import clsx from 'clsx';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../hooks/useAuthModal';
 import { useToast } from '../hooks/useToast';
-import { buyShares, getMyPosition, sellShares } from '../lib/api';
-import { priceYes, quoteBuy, quoteSell } from '../lib/cpmm';
+import { buyShares, getMyPosition, sellShares, syncAutoMarketOdds } from '../lib/api';
+import { quoteBuy, quoteSell } from '../lib/cpmm';
+import { blendedPriceYes, parseAutoSeries, useSpotPrice } from '../lib/live';
 import { formatShares, formatUsd } from '../lib/format';
 import type { Market, Outcome } from '../types';
 
@@ -36,6 +37,10 @@ export function TradeWidget({ market }: TradeWidgetProps) {
 
   const isClosed = market.status !== 'open';
 
+  const series = parseAutoSeries(market.auto_series);
+  const isAutoOpen = !!series && market.status === 'open';
+  const { data: spot } = useSpotPrice(series?.asset ?? null, isAutoOpen);
+
   // Auto-resolving crypto markets (auto_series set) frame outcomes as
   // Up/Down rather than Yes/No; the underlying 'yes'/'no' values sent to the
   // API are unchanged.
@@ -47,12 +52,31 @@ export function TradeWidget({ market }: TradeWidgetProps) {
     enabled: !!session,
   });
 
+  // For auto crypto markets, snap the CPMM pool to the live model price when
+  // the user engages the ticket, so the buy executes at ~the odds shown. The
+  // RPC is throttled server-side (>=5s), so re-runs on outcome/mode change are
+  // cheap no-ops. Best-effort — a failure never blocks trading.
+  useEffect(() => {
+    if (!isAutoOpen) return;
+    let cancelled = false;
+    syncAutoMarketOdds(market.id)
+      .then(() => {
+        if (!cancelled) queryClient.invalidateQueries({ queryKey: ['market', market.slug] });
+      })
+      .catch(() => {
+        /* ignore — display already falls back to the model/blended price */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isAutoOpen, market.id, market.slug, outcome, mode, queryClient]);
+
   const ownedShares = outcome === 'yes' ? (position?.yes_shares ?? 0) : (position?.no_shares ?? 0);
   const balance = profile?.balance ?? 0;
   const amountNum = Number(input);
   const hasValidInput = input.trim() !== '' && Number.isFinite(amountNum) && amountNum > 0;
 
-  const pYes = priceYes(market.yes_pool, market.no_pool);
+  const pYes = blendedPriceYes(market, spot ?? null);
   const pNo = 1 - pYes;
   const outcomePrice = outcome === 'yes' ? pYes : pNo;
 

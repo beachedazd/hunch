@@ -467,6 +467,15 @@ export async function sellShares(
   return data as SellSharesResult;
 }
 
+// Best-effort: repositions an auto crypto market's CPMM pool to the live model
+// price before the user trades, so a buy executes at ~the odds shown. Throttled
+// server-side (>=5s) and a no-op for non-auto/closed markets. A failure here
+// must never block trading — callers swallow it.
+export async function syncAutoMarketOdds(marketId: string): Promise<void> {
+  const { error } = await supabase.rpc('sync_auto_market_odds', { p_market_id: marketId });
+  if (error) throw new Error(error.message);
+}
+
 export async function claimFaucet(): Promise<void> {
   const { error } = await supabase.rpc('claim_faucet');
   if (error) fail(error, 'Faucet claim failed');
