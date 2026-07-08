@@ -109,7 +109,13 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
   const { price: livePrice, points } = useLiveTicker(asset, isOpen);
 
   const closeMs = market.close_time ? new Date(market.close_time).getTime() : Date.now();
-  const openMs = series ? closeMs - series.minutes * 60000 : closeMs;
+  const windowMs = series ? series.minutes * 60000 : 0;
+  const openMs = closeMs - windowMs;
+  // Draw an equal lead-in of real price history BEFORE the window opens, so the
+  // line has a runway leading into the market instead of being cramped into the
+  // short live window. The market's own window is the segment to the right of
+  // the "market open" divider.
+  const chartStartMs = openMs - windowMs;
   const strike = Number(market.strike_price);
 
   const [backfill, setBackfill] = useState<PricePoint[]>([]);
@@ -119,7 +125,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
     if (!asset) return;
     let cancelled = false;
 
-    fetchCandlesInWindow(asset, openMs, closeMs)
+    fetchCandlesInWindow(asset, chartStartMs, closeMs)
       .then((mapped) => {
         if (!cancelled) setBackfill(mapped);
       })
@@ -131,7 +137,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
     return () => {
       cancelled = true;
     };
-  }, [asset, openMs, closeMs]);
+  }, [asset, chartStartMs, closeMs]);
 
   const data = useMemo<PricePoint[]>(() => {
     if (!series || !Number.isFinite(strike)) return [];
@@ -144,7 +150,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
     const cap = isOpen ? Date.now() : closeMs;
     const list = Array.from(merged.entries())
       .map(([time, price]) => ({ time, price }))
-      .filter((p) => p.time <= cap)
+      .filter((p) => p.time >= chartStartMs && p.time <= cap)
       .sort((a, b) => a.time - b.time);
 
     if (!isOpen && market.resolution_price != null) {
@@ -152,7 +158,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
     }
 
     return list;
-  }, [series, strike, openMs, closeMs, backfill, points, isOpen, market.resolution_price]);
+  }, [series, strike, chartStartMs, openMs, closeMs, backfill, points, isOpen, market.resolution_price]);
 
   if (!series || !Number.isFinite(strike)) {
     return (
@@ -242,7 +248,7 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
           <XAxis
             dataKey="time"
             type="number"
-            domain={[openMs, closeMs]}
+            domain={[chartStartMs, closeMs]}
             tickFormatter={(t) => format(new Date(t), 'HH:mm:ss')}
             stroke="#93a5ad"
             tick={{ fontSize: 11 }}
@@ -271,6 +277,20 @@ export function LivePriceChart({ market }: LivePriceChartProps) {
             stroke={TARGET_LINE_COLOR}
             strokeDasharray="5 5"
             label={<TargetPillLabel />}
+          />
+          {/* Vertical divider marking where the market's live window begins —
+              everything to its right is the actual up-or-down window. */}
+          <ReferenceLine
+            x={openMs}
+            stroke="#c9d4d8"
+            strokeDasharray="3 3"
+            label={{
+              value: 'Market open',
+              position: 'insideTopLeft',
+              fontSize: 10,
+              fontWeight: 700,
+              fill: '#93a5ad',
+            }}
           />
           <Area
             type="monotone"
