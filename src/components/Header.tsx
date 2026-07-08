@@ -4,6 +4,7 @@ import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../hooks/useAuthModal';
 import { useDepositModal } from '../hooks/useDepositModal';
+import { useWithdrawModal } from '../hooks/useWithdrawModal';
 import { useToast } from '../hooks/useToast';
 import { useWallet } from '../hooks/useWallet';
 import { formatUsd } from '../lib/format';
@@ -19,6 +20,7 @@ export function Header() {
   const { session, profile, signOut } = useAuth();
   const { openAuthModal } = useAuthModal();
   const { openDepositModal } = useDepositModal();
+  const { openWithdrawModal } = useWithdrawModal();
   const { address } = useWallet();
   const { showToast } = useToast();
   const [menuOpen, setMenuOpen] = useState(false);
@@ -90,14 +92,23 @@ export function Header() {
 
           <div className="flex items-center gap-2.5">
             {session && (
-              <button
-                onClick={openDepositModal}
-                title="Add funds"
-                className="whitespace-nowrap rounded-[11px] bg-teal-tint px-3.5 py-2 text-sm font-bold text-teal-deep transition hover:bg-[#d7eef0]"
-              >
-                {formatUsd(profile?.balance ?? 0)}
-                <span className="ml-1.5 font-extrabold">+</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openDepositModal}
+                  title="Add funds"
+                  className="whitespace-nowrap rounded-[11px] bg-teal-tint px-3.5 py-2 text-sm font-bold text-teal-deep transition hover:bg-[#d7eef0]"
+                >
+                  {formatUsd(profile?.balance ?? 0)}
+                  <span className="ml-1.5 font-extrabold">+</span>
+                </button>
+                <button
+                  onClick={openWithdrawModal}
+                  title="Withdraw funds"
+                  className="whitespace-nowrap rounded-[11px] border border-border-c bg-white px-3.5 py-2 text-sm font-bold text-text-primary transition hover:bg-subtle"
+                >
+                  Withdraw
+                </button>
+              </div>
             )}
 
             {session && address && (

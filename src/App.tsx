@@ -7,6 +7,7 @@ import { TickerTape } from './components/TickerTape';
 import { AuthProvider } from './hooks/useAuth';
 import { AuthModalProvider } from './hooks/useAuthModal';
 import { DepositModalProvider } from './hooks/useDepositModal';
+import { WithdrawModalProvider } from './hooks/useWithdrawModal';
 import { ToastProvider } from './hooks/useToast';
 import { WalletProvider } from './hooks/useWallet';
 import Admin from './pages/Admin';
@@ -45,7 +46,8 @@ function App() {
             <AuthModalProvider>
               <WalletProvider>
                 <DepositModalProvider>
-                  <div className="flex min-h-screen flex-col bg-bg text-text-primary">
+                  <WithdrawModalProvider>
+                    <div className="flex min-h-screen flex-col bg-bg text-text-primary">
                     <Header />
                     <TickerTape />
                     <main className="flex-1 pb-16 sm:pb-0">
@@ -61,7 +63,8 @@ function App() {
                       </Routes>
                     </main>
                     <BottomNav />
-                  </div>
+                    </div>
+                  </WithdrawModalProvider>
                 </DepositModalProvider>
               </WalletProvider>
             </AuthModalProvider>

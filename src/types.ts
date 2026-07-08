@@ -5,13 +5,14 @@ export type Resolution = 'yes' | 'no' | null;
 export type Outcome = 'yes' | 'no';
 export type MarketSource = 'user' | 'polymarket';
 export type TradeAction = 'buy' | 'sell';
-export type TransactionType = 'faucet' | 'deposit' | 'buy' | 'sell' | 'redeem';
+export type TransactionType = 'faucet' | 'deposit' | 'buy' | 'sell' | 'redeem' | 'withdrawal' | 'withdrawal_refund';
 export type DepositStatus = 'confirmed' | 'rejected';
 
 export interface Profile {
   id: string;
   username: string | null;
   wallet_address: string | null;
+  tron_address: string | null;
   balance: number;
   is_admin: boolean;
   last_faucet_at: string | null;
@@ -84,10 +85,25 @@ export interface Deposit {
   id: string;
   user_id: string;
   tx_hash: string;
-  amount_eth: number;
+  amount_eth: number | null;
   amount_usdc: number;
+  chain: 'sepolia' | 'tron';
   status: DepositStatus;
   created_at: string;
+}
+
+export interface Withdrawal {
+  id: string;
+  user_id: string;
+  chain: 'sepolia' | 'tron';
+  dest_address: string;
+  amount_usdc: number;
+  amount_native: number;
+  tx_hash: string | null;
+  status: 'pending' | 'sent' | 'failed';
+  error: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Comment {

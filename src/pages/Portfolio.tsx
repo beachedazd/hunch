@@ -6,6 +6,7 @@ import { Skeleton } from '../components/Skeleton';
 import { useAuth } from '../hooks/useAuth';
 import { useAuthModal } from '../hooks/useAuthModal';
 import { useDepositModal } from '../hooks/useDepositModal';
+import { useWithdrawModal } from '../hooks/useWithdrawModal';
 import { useFaucet } from '../hooks/useFaucet';
 import { useToast } from '../hooks/useToast';
 import {
@@ -22,6 +23,7 @@ export default function Portfolio() {
   const { session, profile } = useAuth();
   const { openAuthModal } = useAuthModal();
   const { openDepositModal } = useDepositModal();
+  const { openWithdrawModal } = useWithdrawModal();
   const { showToast } = useToast();
   const faucet = useFaucet();
 
@@ -103,12 +105,20 @@ export default function Portfolio() {
           <div className="mt-1 text-[28px] font-extrabold text-text-primary">
             {formatUsd(cash)}
           </div>
-          <button
-            onClick={openDepositModal}
-            className="mt-0.5 text-[13px] font-bold text-teal-deep hover:underline"
-          >
-            + Add funds
-          </button>
+          <div className="mt-0.5 flex gap-2">
+            <button
+              onClick={openDepositModal}
+              className="text-[13px] font-bold text-teal-deep hover:underline"
+            >
+              + Add funds
+            </button>
+            <button
+              onClick={openWithdrawModal}
+              className="text-[13px] font-bold text-teal-deep hover:underline"
+            >
+              Withdraw
+            </button>
+          </div>
         </div>
         <div className="rounded-2xl border border-border-c bg-white p-[18px]">
           <div className="text-xs font-bold text-text-muted">Open positions</div>
@@ -201,19 +211,30 @@ export default function Portfolio() {
                 </tr>
               </thead>
               <tbody>
-                {transactions.map((t) => (
-                  <tr key={t.id} className="border-b border-border-c last:border-b-0">
-                    <td className="px-4 py-3 font-semibold capitalize">{t.type}</td>
-                    <td
-                      className={`px-4 py-3 font-bold ${t.amount >= 0 ? 'text-yes' : 'text-no'}`}
-                    >
-                      {t.amount >= 0 ? '+' : ''}
-                      {formatUsd(t.amount)}
-                    </td>
-                    <td className="px-4 py-3 text-text-muted">{t.ref || '—'}</td>
-                    <td className="px-4 py-3 text-text-muted">{formatDateTime(t.created_at)}</td>
-                  </tr>
-                ))}
+                {transactions.map((t) => {
+                  let label: string = t.type;
+                  let isPositive = t.amount >= 0;
+                  if (t.type === 'withdrawal') {
+                    label = 'Withdrawal';
+                    isPositive = false;
+                  } else if (t.type === 'withdrawal_refund') {
+                    label = 'Withdrawal refund';
+                    isPositive = true;
+                  }
+                  return (
+                    <tr key={t.id} className="border-b border-border-c last:border-b-0">
+                      <td className="px-4 py-3 font-semibold capitalize">{label}</td>
+                      <td
+                        className={`px-4 py-3 font-bold ${isPositive ? 'text-yes' : 'text-no'}`}
+                      >
+                        {isPositive ? '+' : ''}
+                        {formatUsd(t.amount)}
+                      </td>
+                      <td className="px-4 py-3 text-text-muted">{t.ref || '—'}</td>
+                      <td className="px-4 py-3 text-text-muted">{formatDateTime(t.created_at)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
