@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { EmptyState } from '../components/EmptyState';
+import { LivePriceChart } from '../components/LivePriceChart';
 import { PositionCard } from '../components/PositionCard';
 import { PriceChart } from '../components/PriceChart';
 import { Skeleton } from '../components/Skeleton';
@@ -11,7 +12,7 @@ import { useAuthModal } from '../hooks/useAuthModal';
 import { addComment, getComments, getMarketBySlug, getMyPosition, getTrades } from '../lib/api';
 import { priceYes } from '../lib/cpmm';
 import { formatDate, formatDateTime, formatUsd } from '../lib/format';
-import { parseAutoSeries, useCountdown, useSpotPrice } from '../lib/live';
+import { parseAutoSeries, useCountdown, useLiveTicker } from '../lib/live';
 
 // Small print near the trade widget for auto markets, e.g. "Auto-resolves at
 // 15:05 UTC. Winnings credited automatically." Formats close_time in UTC to
@@ -56,7 +57,7 @@ export default function MarketDetail() {
   // Hooks must run unconditionally (rules of hooks) — they're no-ops via
   // `enabled`/empty input until we actually have an open auto market.
   const { msLeft, text: countdownText } = useCountdown(market?.close_time ?? '');
-  const { data: spotPrice } = useSpotPrice(series?.asset ?? null, isAutoOpen);
+  const { price: spotPrice } = useLiveTicker(series?.asset ?? null, isAutoOpen);
 
   const { data: trades } = useQuery({
     queryKey: ['trades', market?.id ?? null],
@@ -245,7 +246,11 @@ export default function MarketDetail() {
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
         <div className="space-y-5 lg:col-span-2">
-          <PriceChart trades={trades ?? []} market={market} />
+          {series ? (
+            <LivePriceChart market={market} />
+          ) : (
+            <PriceChart trades={trades ?? []} market={market} />
+          )}
 
           <div className="rounded-2xl border border-border-c bg-white p-5">
             <h2 className="mb-2 text-[15px] font-extrabold text-text-primary">
