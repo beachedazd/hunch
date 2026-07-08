@@ -120,6 +120,9 @@ upstream market id and is the upsert key.
 
 - **Import**: `sync_import_polymarket_market` (service-role RPC) upserts a mirrored market
   from Polymarket's Gamma API data (question, category, image, `price_yes` seeding the pools).
+  The sync tops each category up to a steady-state target of open mirrored markets
+  (`TARGET_OPEN_PER_CATEGORY`, default 4) rather than importing a fresh batch each run, so the
+  hourly cron converges; freed budget from resolved markets backfills over time.
 - **Resolve**: `sync_resolve_market` (service-role RPC) resolves a mirrored market once the
   real one settles. Mapping from Gamma's market fields: `umaResolutionStatus === 'resolved'`
   and `closed === true` → outcome from `outcomePrices`: `[1, 0]` → yes, `[0, 1]` → no, anything
